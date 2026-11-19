@@ -5,11 +5,13 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Cozzyz</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
 <style>
   :root {
     --school: #e53e3e;
     --other: #38a169;
     --entertainment: #805ad5;
+    --google: #4285f4;
     --bg: #0f1115;
     --card: #181b22;
     --card2: #1f232c;
@@ -60,6 +62,8 @@
     justify-content: space-between;
     align-items: center;
     padding: 18px 0 10px;
+    gap: 10px;
+    flex-wrap: wrap;
   }
   header h1 { font-size: 1.5rem; margin: 0; }
   .tabs {
@@ -87,9 +91,15 @@
     color: var(--muted);
     padding: 8px 12px;
     border-radius: 8px;
-    cursor: not-allowed;
+    cursor: pointer;
     font-size: 0.85rem;
   }
+  #gcalBtn.connected {
+    border: 1px solid var(--google);
+    color: var(--google);
+    cursor: default;
+  }
+  #gcalStatus { font-size: 0.72rem; color: var(--muted); width: 100%; text-align: right; }
   .view { display: none; }
   .view.active { display: block; }
   .agenda-item {
@@ -105,6 +115,7 @@
   .agenda-item.school { border-left-color: var(--school); background: linear-gradient(90deg, rgba(229,62,62,0.12), var(--card) 40%); }
   .agenda-item.other { border-left-color: var(--other); background: linear-gradient(90deg, rgba(56,161,105,0.12), var(--card) 40%); }
   .agenda-item.entertainment { border-left-color: var(--entertainment); background: linear-gradient(90deg, rgba(128,90,213,0.12), var(--card) 40%); }
+  .agenda-item.google { border-left-color: var(--google); background: linear-gradient(90deg, rgba(66,133,244,0.12), var(--card) 40%); }
   .agenda-item.done { opacity: 0.45; }
   .agenda-main { flex: 1; min-width: 0; }
   .agenda-title { font-weight: 600; font-size: 1rem; }
@@ -121,6 +132,7 @@
   .cat-pill.school { background: var(--school); }
   .cat-pill.other { background: var(--other); }
   .cat-pill.entertainment { background: var(--entertainment); }
+  .cat-pill.google { background: var(--google); }
   .agenda-actions { display: flex; gap: 6px; flex-shrink: 0; }
   .icon-btn {
     background: var(--card2);
@@ -186,6 +198,7 @@
   .cal-dot.school { background: var(--school); }
   .cal-dot.other { background: var(--other); }
   .cal-dot.entertainment { background: var(--entertainment); }
+  .cal-dot.google { background: var(--google); }
   .day-detail {
     margin-top: 14px;
     background: var(--card);
@@ -244,7 +257,8 @@
 <div id="app">
   <header>
     <h1>Cozzyz</h1>
-    <button id="gcalBtn" title="Coming soon">Connect Google Calendar</button>
+    <button id="gcalBtn" title="Connect your Google Calendar">Connect Google Calendar</button>
+    <div id="gcalStatus"></div>
   </header>
 
   <div class="tabs">
@@ -267,7 +281,7 @@
     <div id="dayDetail" class="day-detail" style="display:none;"></div>
   </div>
 
-  <footer class="app-footer">Cozzyz &middot; data stored in Supabase</footer>
+  <footer class="app-footer">Cozzyz &middot; data stored in Supabase &middot; syncs with Google Calendar</footer>
 </div>
 
 <button class="fab" id="addFab" style="display:none;">+</button>
@@ -310,6 +324,17 @@
   var PASSCODE = "cozzyz2026";
   var SESSION_KEY = "cozzyz_unlocked";
 
+  // --- Google Calendar sync config ---
+  var GCAL_CLIENT_ID = "483435323151-0n5tdi81e6gr7nlrtokva1o47ki6smem.apps.googleusercontent.com";
+  var GCAL_SCOPE = "https://www.googleapis.com/auth/calendar.events";
+  var GCAL_TOKEN_KEY = "cozzyz_gcal_token";
+  var GCAL_EVER_CONNECTED_KEY = "cozzyz_gcal_ever_connected";
+
+  var gcalTokenClient = null;
+  var gcalAccessToken = null;
+  var gcalTokenExpiresAt = 0;
+  var gcalEvents = []; // events pulled from Google Calendar (read-only display)
+
   var supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
   var tasks = [];
@@ -349,6 +374,7 @@
     ensureAuth().then(function () {
       loadTasks();
     });
+    initGoogleCalendar();
   }
 
   function ensureAuth() {
@@ -388,6 +414,158 @@
     return supabase.from(TABLE).delete().eq("id", id);
   }
 
+  // ===================== Google Calendar two-way sync =====================
+
+  function initGoogleCalendar() {
+    var btn = document.getElementById("gcalBtn");
+
+    function setupClient() {
+      if (!window.google || !window.google.accounts || !window.google.accounts.oauth2) {
+        setTimeout(setupClient, 300);
+        return;
+      }
+      gcalTokenClient = google.accounts.oauth2.initTokenClient({
+        client_id: GCAL_CLIENT_ID,
+        scope: GCAL_SCOPE,
+        callback: function (resp) {
+          if (resp && resp.access_token) {
+            gcalAccessToken = resp.access_token;
+            gcalTokenExpiresAt = Date.now() + (parseInt(resp.expires_in, 10) || 3500) * 1000;
+            try {
+              localStorage.setItem(GCAL_TOKEN_KEY, JSON.stringify({ token: gcalAccessToken, exp: gcalTokenExpiresAt }));
+              localStorage.setItem(GCAL_EVER_CONNECTED_KEY, "1");
+            } catch (e) {}
+            setGcalConnectedUI(true);
+            pullGoogleEvents();
+          }
+        }
+      });
+
+      // try to resume a still-valid token from a previous session
+      try {
+        var stored = JSON.parse(localStorage.getItem(GCAL_TOKEN_KEY) || "null");
+        if (stored && stored.token && stored.exp > Date.now() + 60000) {
+          gcalAccessToken = stored.token;
+          gcalTokenExpiresAt = stored.exp;
+          setGcalConnectedUI(true);
+          pullGoogleEvents();
+        } else if (localStorage.getItem(GCAL_EVER_CONNECTED_KEY) === "1") {
+          // attempt a silent (no prompt) reconnect
+          gcalTokenClient.requestAccessToken({ prompt: "" });
+        }
+      } catch (e) {}
+    }
+    setupClient();
+
+    btn.addEventListener("click", function () {
+      if (isGcalConnected()) return;
+      if (gcalTokenClient) {
+        gcalTokenClient.requestAccessToken({ prompt: "consent" });
+      }
+    });
+  }
+
+  function isGcalConnected() {
+    return !!gcalAccessToken && gcalTokenExpiresAt > Date.now();
+  }
+
+  function setGcalConnectedUI(connected) {
+    var btn = document.getElementById("gcalBtn");
+    var status = document.getElementById("gcalStatus");
+    if (connected) {
+      btn.textContent = "Google Calendar: Connected";
+      btn.classList.add("connected");
+      status.textContent = "Two-way sync active";
+    } else {
+      btn.textContent = "Connect Google Calendar";
+      btn.classList.remove("connected");
+      status.textContent = "";
+    }
+  }
+
+  function gcalFetch(path, options) {
+    options = options || {};
+    options.headers = options.headers || {};
+    options.headers["Authorization"] = "Bearer " + gcalAccessToken;
+    options.headers["Content-Type"] = "application/json";
+    return fetch("https://www.googleapis.com/calendar/v3/calendars/primary/" + path, options)
+      .then(function (r) {
+        if (!r.ok) {
+          return r.text().then(function (t) { throw new Error("Google Calendar API error " + r.status + ": " + t); });
+        }
+        if (r.status === 204) return null;
+        return r.json();
+      });
+  }
+
+  function pullGoogleEvents() {
+    if (!isGcalConnected()) return;
+    var now = new Date();
+    var timeMin = new Date(now.getFullYear(), now.getMonth() - 1, 1).toISOString();
+    var timeMax = new Date(now.getFullYear(), now.getMonth() + 3, 1).toISOString();
+    var q = "events?timeMin=" + encodeURIComponent(timeMin) + "&timeMax=" + encodeURIComponent(timeMax) +
+      "&singleEvents=true&orderBy=startTime&maxResults=250";
+    gcalFetch(q).then(function (data) {
+      var items = (data && data.items) || [];
+      var cozzyzEventIds = {};
+      tasks.forEach(function (t) { if (t.gcal_event_id) cozzyzEventIds[t.gcal_event_id] = true; });
+      gcalEvents = items
+        .filter(function (ev) { return !cozzyzEventIds[ev.id]; }) // don't double-show items Cozzyz itself created
+        .filter(function (ev) { return ev.start && (ev.start.dateTime || ev.start.date); })
+        .map(function (ev) {
+          var startStr = ev.start.dateTime || (ev.start.date + "T00:00:00");
+          return {
+            id: "gcal_" + ev.id,
+            gcal_id: ev.id,
+            title: ev.summary || "(untitled Google event)",
+            due_at: new Date(startStr).toISOString(),
+            category: "google",
+            done: false,
+            source: "google"
+          };
+        });
+      renderAgenda();
+      renderCalendar();
+    }).catch(function (err) {
+      console.error("Pull from Google Calendar failed:", err.message);
+    });
+  }
+
+  function pushTaskCreate(task) {
+    if (!isGcalConnected()) return Promise.resolve(null);
+    var start = new Date(task.due_at);
+    var end = new Date(start.getTime() + 60 * 60 * 1000);
+    var body = {
+      summary: "[" + task.category + "] " + task.title,
+      start: { dateTime: start.toISOString() },
+      end: { dateTime: end.toISOString() }
+    };
+    return gcalFetch("events", { method: "POST", body: JSON.stringify(body) })
+      .then(function (ev) { return ev && ev.id; })
+      .catch(function (err) { console.error("Push create to Google Calendar failed:", err.message); return null; });
+  }
+
+  function pushTaskUpdate(task) {
+    if (!isGcalConnected() || !task.gcal_event_id) return Promise.resolve(null);
+    var start = new Date(task.due_at);
+    var end = new Date(start.getTime() + 60 * 60 * 1000);
+    var body = {
+      summary: "[" + task.category + "] " + task.title,
+      start: { dateTime: start.toISOString() },
+      end: { dateTime: end.toISOString() }
+    };
+    return gcalFetch("events/" + encodeURIComponent(task.gcal_event_id), { method: "PATCH", body: JSON.stringify(body) })
+      .catch(function (err) { console.error("Push update to Google Calendar failed:", err.message); return null; });
+  }
+
+  function pushTaskDelete(gcalEventId) {
+    if (!isGcalConnected() || !gcalEventId) return Promise.resolve(null);
+    return gcalFetch("events/" + encodeURIComponent(gcalEventId), { method: "DELETE" })
+      .catch(function (err) { console.error("Push delete to Google Calendar failed:", err.message); return null; });
+  }
+
+  // ===================== View switching =====================
+
   document.getElementById("tabAgendaBtn").addEventListener("click", function () { switchView("agenda"); });
   document.getElementById("tabCalendarBtn").addEventListener("click", function () { switchView("calendar"); });
 
@@ -404,15 +582,24 @@
     return d.toLocaleString(undefined, opts);
   }
 
+  function allItems() {
+    return tasks.map(function (t) {
+      t.source = t.source || "cozzyz";
+      return t;
+    }).concat(gcalEvents);
+  }
+
   function renderAgenda() {
     var list = document.getElementById("agendaList");
     list.innerHTML = "";
     var now = new Date();
-    var upcoming = tasks
+    var items = allItems();
+
+    var upcoming = items
       .filter(function (t) { return !t.done && new Date(t.due_at) >= new Date(now.getTime() - 60 * 1000); })
       .sort(function (a, b) { return new Date(a.due_at) - new Date(b.due_at); });
 
-    var past = tasks
+    var past = items
       .filter(function (t) { return t.done || new Date(t.due_at) < new Date(now.getTime() - 60 * 1000); })
       .sort(function (a, b) { return new Date(b.due_at) - new Date(a.due_at); });
 
@@ -430,6 +617,7 @@
     var el = document.createElement("div");
     el.className = "agenda-item " + t.category + (t.done ? " done" : "");
     var due = new Date(t.due_at);
+    var isGoogle = t.source === "google";
 
     var main = document.createElement("div");
     main.className = "agenda-main";
@@ -442,7 +630,7 @@
     meta.className = "agenda-meta";
     var pill = document.createElement("span");
     pill.className = "cat-pill " + t.category;
-    pill.textContent = t.category;
+    pill.textContent = isGoogle ? "google" : t.category;
     meta.appendChild(document.createTextNode(fmtDateTime(due) + "  "));
     meta.appendChild(pill);
 
@@ -452,22 +640,24 @@
     var actions = document.createElement("div");
     actions.className = "agenda-actions";
 
-    var doneBtn = document.createElement("button");
-    doneBtn.className = "icon-btn";
-    doneBtn.textContent = t.done ? "↺" : "✓";
-    doneBtn.title = t.done ? "Mark not done" : "Mark done";
-    doneBtn.addEventListener("click", function () {
-      updateTask(t.id, { done: !t.done }).then(loadTasks);
-    });
+    if (!isGoogle) {
+      var doneBtn = document.createElement("button");
+      doneBtn.className = "icon-btn";
+      doneBtn.textContent = t.done ? "↺" : "✓";
+      doneBtn.title = t.done ? "Mark not done" : "Mark done";
+      doneBtn.addEventListener("click", function () {
+        updateTask(t.id, { done: !t.done }).then(loadTasks);
+      });
 
-    var editBtn = document.createElement("button");
-    editBtn.className = "icon-btn";
-    editBtn.textContent = "✎";
-    editBtn.title = "Edit";
-    editBtn.addEventListener("click", function () { openModal(t); });
+      var editBtn = document.createElement("button");
+      editBtn.className = "icon-btn";
+      editBtn.textContent = "✎";
+      editBtn.title = "Edit";
+      editBtn.addEventListener("click", function () { openModal(t); });
 
-    actions.appendChild(doneBtn);
-    actions.appendChild(editBtn);
+      actions.appendChild(doneBtn);
+      actions.appendChild(editBtn);
+    }
 
     el.appendChild(main);
     el.appendChild(actions);
@@ -509,8 +699,9 @@
     var grid = document.getElementById("calGrid");
     grid.innerHTML = "";
 
+    var items = allItems();
     var tasksByDay = {};
-    tasks.forEach(function (t) {
+    items.forEach(function (t) {
       var d = new Date(t.due_at);
       var key = dayKey(d);
       if (!tasksByDay[key]) tasksByDay[key] = [];
@@ -524,6 +715,8 @@
       blank.className = "cal-day empty";
       grid.appendChild(blank);
     }
+
+    var CATS_WITH_GOOGLE = CATS.concat(["google"]);
 
     for (var day = 1; day <= daysInMonth; day++) {
       var cellDate = new Date(year, month, day);
@@ -541,7 +734,7 @@
       dots.className = "cal-dots";
       var cats = {};
       (tasksByDay[key] || []).forEach(function (t) { cats[t.category] = true; });
-      CATS.forEach(function (c) {
+      CATS_WITH_GOOGLE.forEach(function (c) {
         if (cats[c]) {
           var dot = document.createElement("div");
           dot.className = "cal-dot " + c;
@@ -624,16 +817,37 @@
     var dueIso = new Date(dueRaw).toISOString();
 
     if (id) {
+      var existing = tasks.filter(function (t) { return String(t.id) === String(id); })[0];
       updateTask(id, { title: title, due_at: dueIso, category: category }).then(function (res) {
         if (res.error) { alertInline(res.error.message); return; }
         closeModal();
+        if (existing) {
+          existing.title = title;
+          existing.due_at = dueIso;
+          existing.category = category;
+          pushTaskUpdate(existing);
+        }
         loadTasks();
       });
     } else {
       addTask({ title: title, due_at: dueIso, category: category, done: false }).then(function (res) {
         if (res.error) { alertInline(res.error.message); return; }
         closeModal();
-        loadTasks();
+        var newRow = res.data && res.data[0];
+        if (newRow && isGcalConnected()) {
+          pushTaskCreate(newRow).then(function (gcalId) {
+            if (gcalId) {
+              updateTask(newRow.id, { gcal_event_id: gcalId }).then(function () {
+                loadTasks();
+                pullGoogleEvents();
+              });
+            } else {
+              loadTasks();
+            }
+          });
+        } else {
+          loadTasks();
+        }
       });
     }
   });
@@ -641,10 +855,18 @@
   document.getElementById("modalDelete").addEventListener("click", function () {
     var id = document.getElementById("taskId").value;
     if (!id) return;
+    var existing = tasks.filter(function (t) { return String(t.id) === String(id); })[0];
     deleteTask(id).then(function (res) {
       if (res.error) { alertInline(res.error.message); return; }
       closeModal();
-      loadTasks();
+      if (existing && existing.gcal_event_id) {
+        pushTaskDelete(existing.gcal_event_id).then(function () {
+          loadTasks();
+          pullGoogleEvents();
+        });
+      } else {
+        loadTasks();
+      }
     });
   });
 
@@ -661,13 +883,6 @@
     }
     existing.textContent = msg;
   }
-
-  document.getElementById("gcalBtn").addEventListener("click", function () {
-    document.getElementById("gcalBtn").textContent = "Google Calendar sync coming soon";
-    setTimeout(function () {
-      document.getElementById("gcalBtn").textContent = "Connect Google Calendar";
-    }, 2000);
-  });
 })();
 </script>
 </body>
