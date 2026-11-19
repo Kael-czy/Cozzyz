@@ -304,8 +304,8 @@
 (function () {
   "use strict";
 
-  var SUPABASE_URL = "https://epeewenzwgcaznmzvtou.supabase.co";
-  var SUPABASE_KEY = "sb_publishable_ExYjCKwNoVAFpHvR1Gt4tA_NtO58VzR";
+  var SUPABASE_URL = "https://dnrumlfxnqbqxbkxdzum.supabase.co";
+  var SUPABASE_KEY = "sb_publishable_gYGE2QVBELzeiP1KqB1_cA_WEDtVgmw";
   var TABLE = "cozzyz_tasks";
   var PASSCODE = "cozzyz2026";
   var SESSION_KEY = "cozzyz_unlocked";
@@ -354,7 +354,7 @@
   function ensureAuth() {
     return supabase.auth.getSession().then(function (res) {
       if (res.data && res.data.session) return res.data.session;
-      return supabase.auth.signInAnonymously().then(function (r) {
+      return supabase.auth.signInWithPassword({ email: "cozzyz@kaelapp.local", password: "Cz9rT2xVwL5mQ8fA!" }).then(function (r) {
         if (r.error) {
           console.error("Anonymous sign-in failed:", r.error.message);
         }
