@@ -1,0 +1,674 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cozzyz</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<style>
+  :root {
+    --school: #e53e3e;
+    --other: #38a169;
+    --entertainment: #805ad5;
+    --bg: #0f1115;
+    --card: #181b22;
+    --card2: #1f232c;
+    --text: #e8e8ec;
+    --muted: #9aa0ad;
+    --border: #2a2f3a;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+  }
+  #app { display: none; max-width: 760px; margin: 0 auto; padding: 16px 16px 80px; }
+  #gate {
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: 14px;
+    padding: 20px;
+  }
+  #gate h1 { margin: 0 0 4px; font-size: 1.4rem; }
+  #gate input {
+    background: var(--card);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 12px 14px;
+    border-radius: 10px;
+    font-size: 1rem;
+    width: 240px;
+    text-align: center;
+  }
+  #gate button {
+    background: #4f66f0;
+    color: white;
+    border: none;
+    padding: 12px 22px;
+    border-radius: 10px;
+    font-size: 1rem;
+    cursor: pointer;
+  }
+  #gateError { color: var(--school); font-size: 0.85rem; min-height: 1em; }
+  header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 18px 0 10px;
+  }
+  header h1 { font-size: 1.5rem; margin: 0; }
+  .tabs {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 16px;
+  }
+  .tabs button {
+    flex: 1;
+    background: var(--card);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 10px;
+    border-radius: 10px;
+    cursor: pointer;
+    font-size: 0.95rem;
+  }
+  .tabs button.active {
+    background: #4f66f0;
+    border-color: #4f66f0;
+  }
+  #gcalBtn {
+    background: var(--card2);
+    border: 1px dashed var(--border);
+    color: var(--muted);
+    padding: 8px 12px;
+    border-radius: 8px;
+    cursor: not-allowed;
+    font-size: 0.85rem;
+  }
+  .view { display: none; }
+  .view.active { display: block; }
+  .agenda-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    background: var(--card);
+    border-radius: 12px;
+    padding: 12px 14px;
+    margin-bottom: 10px;
+    border-left: 5px solid var(--muted);
+  }
+  .agenda-item.school { border-left-color: var(--school); background: linear-gradient(90deg, rgba(229,62,62,0.12), var(--card) 40%); }
+  .agenda-item.other { border-left-color: var(--other); background: linear-gradient(90deg, rgba(56,161,105,0.12), var(--card) 40%); }
+  .agenda-item.entertainment { border-left-color: var(--entertainment); background: linear-gradient(90deg, rgba(128,90,213,0.12), var(--card) 40%); }
+  .agenda-item.done { opacity: 0.45; }
+  .agenda-main { flex: 1; min-width: 0; }
+  .agenda-title { font-weight: 600; font-size: 1rem; }
+  .agenda-title.strike { text-decoration: line-through; }
+  .agenda-meta { color: var(--muted); font-size: 0.82rem; margin-top: 2px; }
+  .cat-pill {
+    font-size: 0.7rem;
+    padding: 2px 8px;
+    border-radius: 999px;
+    color: white;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+  .cat-pill.school { background: var(--school); }
+  .cat-pill.other { background: var(--other); }
+  .cat-pill.entertainment { background: var(--entertainment); }
+  .agenda-actions { display: flex; gap: 6px; flex-shrink: 0; }
+  .icon-btn {
+    background: var(--card2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 0.9rem;
+  }
+  .empty-state { color: var(--muted); text-align: center; padding: 40px 0; }
+  .fab {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    width: 56px;
+    height: 56px;
+    border-radius: 50%;
+    background: #4f66f0;
+    color: white;
+    border: none;
+    font-size: 1.6rem;
+    cursor: pointer;
+    box-shadow: 0 4px 14px rgba(0,0,0,0.4);
+  }
+  .cal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 10px;
+  }
+  .cal-header button {
+    background: var(--card);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 6px 12px;
+    border-radius: 8px;
+    cursor: pointer;
+  }
+  .cal-grid {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 4px;
+  }
+  .cal-dow { text-align: center; color: var(--muted); font-size: 0.75rem; padding-bottom: 4px; }
+  .cal-day {
+    aspect-ratio: 1;
+    background: var(--card);
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    padding: 4px;
+    display: flex;
+    flex-direction: column;
+    cursor: pointer;
+    position: relative;
+  }
+  .cal-day.empty { background: transparent; border: none; cursor: default; }
+  .cal-day.today { border-color: #4f66f0; }
+  .cal-day-num { font-size: 0.78rem; color: var(--muted); }
+  .cal-dots { display: flex; gap: 3px; flex-wrap: wrap; margin-top: auto; }
+  .cal-dot { width: 7px; height: 7px; border-radius: 50%; }
+  .cal-dot.school { background: var(--school); }
+  .cal-dot.other { background: var(--other); }
+  .cal-dot.entertainment { background: var(--entertainment); }
+  .day-detail {
+    margin-top: 14px;
+    background: var(--card);
+    border-radius: 12px;
+    padding: 12px;
+  }
+  .day-detail h3 { margin: 0 0 8px; font-size: 1rem; }
+  .modal-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.6);
+    align-items: center;
+    justify-content: center;
+    z-index: 50;
+    padding: 16px;
+  }
+  .modal-overlay.open { display: flex; }
+  .modal {
+    background: var(--card);
+    border-radius: 14px;
+    padding: 20px;
+    width: 100%;
+    max-width: 380px;
+  }
+  .modal h2 { margin-top: 0; font-size: 1.15rem; }
+  .field { margin-bottom: 12px; }
+  .field label { display: block; font-size: 0.82rem; color: var(--muted); margin-bottom: 4px; }
+  .field input, .field select {
+    width: 100%;
+    background: var(--card2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 10px;
+    border-radius: 8px;
+    font-size: 0.95rem;
+  }
+  .modal-actions { display: flex; gap: 8px; margin-top: 16px; }
+  .modal-actions button { flex: 1; padding: 10px; border-radius: 8px; border: none; cursor: pointer; font-size: 0.95rem; }
+  .btn-primary { background: #4f66f0; color: white; }
+  .btn-secondary { background: var(--card2); color: var(--text); border: 1px solid var(--border) !important; }
+  .btn-danger { background: var(--school); color: white; }
+  footer.app-footer { text-align: center; color: var(--muted); font-size: 0.75rem; padding: 20px 0 0; }
+</style>
+</head>
+<body>
+
+<div id="gate">
+  <h1>Cozzyz</h1>
+  <p style="color:var(--muted); margin-top:-8px;">Enter passcode to continue</p>
+  <input type="password" id="gateInput" placeholder="Passcode" autocomplete="off" />
+  <button id="gateBtn">Unlock</button>
+  <div id="gateError"></div>
+</div>
+
+<div id="app">
+  <header>
+    <h1>Cozzyz</h1>
+    <button id="gcalBtn" title="Coming soon">Connect Google Calendar</button>
+  </header>
+
+  <div class="tabs">
+    <button id="tabAgendaBtn" class="active">Agenda</button>
+    <button id="tabCalendarBtn">Calendar</button>
+  </div>
+
+  <div id="agendaView" class="view active">
+    <div id="agendaList"></div>
+  </div>
+
+  <div id="calendarView" class="view">
+    <div class="cal-header">
+      <button id="prevMonth">&larr;</button>
+      <strong id="calMonthLabel"></strong>
+      <button id="nextMonth">&rarr;</button>
+    </div>
+    <div class="cal-grid" id="calDow"></div>
+    <div class="cal-grid" id="calGrid"></div>
+    <div id="dayDetail" class="day-detail" style="display:none;"></div>
+  </div>
+
+  <footer class="app-footer">Cozzyz &middot; data stored in Supabase</footer>
+</div>
+
+<button class="fab" id="addFab" style="display:none;">+</button>
+
+<div class="modal-overlay" id="modalOverlay">
+  <div class="modal">
+    <h2 id="modalTitle">Add Task</h2>
+    <input type="hidden" id="taskId" />
+    <div class="field">
+      <label>Title</label>
+      <input type="text" id="taskTitleInput" placeholder="e.g. Submit assignment" />
+    </div>
+    <div class="field">
+      <label>Date &amp; time</label>
+      <input type="datetime-local" id="taskDueInput" />
+    </div>
+    <div class="field">
+      <label>Category</label>
+      <select id="taskCategoryInput">
+        <option value="school">School</option>
+        <option value="other">Other</option>
+        <option value="entertainment">Entertainment</option>
+      </select>
+    </div>
+    <div class="modal-actions">
+      <button class="btn-secondary" id="modalCancel">Cancel</button>
+      <button class="btn-danger" id="modalDelete" style="display:none;">Delete</button>
+      <button class="btn-primary" id="modalSave">Save</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  var SUPABASE_URL = "https://epeewenzwgcaznmzvtou.supabase.co";
+  var SUPABASE_KEY = "sb_publishable_ExYjCKwNoVAFpHvR1Gt4tA_NtO58VzR";
+  var TABLE = "cozzyz_tasks";
+  var PASSCODE = "cozzyz2026";
+  var SESSION_KEY = "cozzyz_unlocked";
+
+  var supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+  var tasks = [];
+  var currentView = "agenda";
+  var calCursor = new Date();
+  var selectedDayKey = null;
+
+  var CATS = ["school", "other", "entertainment"];
+
+  function tryUnlock() {
+    var val = document.getElementById("gateInput").value;
+    if (val === PASSCODE) {
+      sessionStorage.setItem(SESSION_KEY, "1");
+      enterApp();
+    } else {
+      document.getElementById("gateError").textContent = "Incorrect passcode.";
+    }
+  }
+
+  document.getElementById("gateBtn").addEventListener("click", tryUnlock);
+  document.getElementById("gateInput").addEventListener("keydown", function (e) {
+    if (e.key === "Enter") tryUnlock();
+  });
+
+  function enterApp() {
+    document.getElementById("gate").style.display = "none";
+    document.getElementById("app").style.display = "block";
+    document.getElementById("addFab").style.display = "block";
+    init();
+  }
+
+  if (sessionStorage.getItem(SESSION_KEY) === "1") {
+    enterApp();
+  }
+
+  function init() {
+    ensureAuth().then(function () {
+      loadTasks();
+    });
+  }
+
+  function ensureAuth() {
+    return supabase.auth.getSession().then(function (res) {
+      if (res.data && res.data.session) return res.data.session;
+      return supabase.auth.signInAnonymously().then(function (r) {
+        if (r.error) {
+          console.error("Anonymous sign-in failed:", r.error.message);
+        }
+        return r.data && r.data.session;
+      });
+    });
+  }
+
+  function loadTasks() {
+    supabase.from(TABLE).select("*").order("due_at", { ascending: true }).then(function (res) {
+      if (res.error) {
+        console.error("Load error:", res.error.message);
+        tasks = [];
+      } else {
+        tasks = res.data || [];
+      }
+      renderAgenda();
+      renderCalendar();
+    });
+  }
+
+  function addTask(task) {
+    return supabase.from(TABLE).insert(task).select();
+  }
+
+  function updateTask(id, patch) {
+    return supabase.from(TABLE).update(patch).eq("id", id);
+  }
+
+  function deleteTask(id) {
+    return supabase.from(TABLE).delete().eq("id", id);
+  }
+
+  document.getElementById("tabAgendaBtn").addEventListener("click", function () { switchView("agenda"); });
+  document.getElementById("tabCalendarBtn").addEventListener("click", function () { switchView("calendar"); });
+
+  function switchView(v) {
+    currentView = v;
+    document.getElementById("tabAgendaBtn").classList.toggle("active", v === "agenda");
+    document.getElementById("tabCalendarBtn").classList.toggle("active", v === "calendar");
+    document.getElementById("agendaView").classList.toggle("active", v === "agenda");
+    document.getElementById("calendarView").classList.toggle("active", v === "calendar");
+  }
+
+  function fmtDateTime(d) {
+    var opts = { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" };
+    return d.toLocaleString(undefined, opts);
+  }
+
+  function renderAgenda() {
+    var list = document.getElementById("agendaList");
+    list.innerHTML = "";
+    var now = new Date();
+    var upcoming = tasks
+      .filter(function (t) { return !t.done && new Date(t.due_at) >= new Date(now.getTime() - 60 * 1000); })
+      .sort(function (a, b) { return new Date(a.due_at) - new Date(b.due_at); });
+
+    var past = tasks
+      .filter(function (t) { return t.done || new Date(t.due_at) < new Date(now.getTime() - 60 * 1000); })
+      .sort(function (a, b) { return new Date(b.due_at) - new Date(a.due_at); });
+
+    if (upcoming.length === 0 && past.length === 0) {
+      list.innerHTML = '<div class="empty-state">Nothing scheduled yet. Tap + to add a task.</div>';
+      return;
+    }
+
+    upcoming.concat(past).forEach(function (t) {
+      list.appendChild(renderAgendaItem(t));
+    });
+  }
+
+  function renderAgendaItem(t) {
+    var el = document.createElement("div");
+    el.className = "agenda-item " + t.category + (t.done ? " done" : "");
+    var due = new Date(t.due_at);
+
+    var main = document.createElement("div");
+    main.className = "agenda-main";
+
+    var titleRow = document.createElement("div");
+    titleRow.className = "agenda-title" + (t.done ? " strike" : "");
+    titleRow.textContent = t.title;
+
+    var meta = document.createElement("div");
+    meta.className = "agenda-meta";
+    var pill = document.createElement("span");
+    pill.className = "cat-pill " + t.category;
+    pill.textContent = t.category;
+    meta.appendChild(document.createTextNode(fmtDateTime(due) + "  "));
+    meta.appendChild(pill);
+
+    main.appendChild(titleRow);
+    main.appendChild(meta);
+
+    var actions = document.createElement("div");
+    actions.className = "agenda-actions";
+
+    var doneBtn = document.createElement("button");
+    doneBtn.className = "icon-btn";
+    doneBtn.textContent = t.done ? "↺" : "✓";
+    doneBtn.title = t.done ? "Mark not done" : "Mark done";
+    doneBtn.addEventListener("click", function () {
+      updateTask(t.id, { done: !t.done }).then(loadTasks);
+    });
+
+    var editBtn = document.createElement("button");
+    editBtn.className = "icon-btn";
+    editBtn.textContent = "✎";
+    editBtn.title = "Edit";
+    editBtn.addEventListener("click", function () { openModal(t); });
+
+    actions.appendChild(doneBtn);
+    actions.appendChild(editBtn);
+
+    el.appendChild(main);
+    el.appendChild(actions);
+    return el;
+  }
+
+  document.getElementById("prevMonth").addEventListener("click", function () {
+    calCursor.setMonth(calCursor.getMonth() - 1);
+    renderCalendar();
+  });
+  document.getElementById("nextMonth").addEventListener("click", function () {
+    calCursor.setMonth(calCursor.getMonth() + 1);
+    renderCalendar();
+  });
+
+  function dayKey(d) {
+    return d.getFullYear() + "-" + (d.getMonth() + 1) + "-" + d.getDate();
+  }
+
+  function renderCalendar() {
+    var dowEl = document.getElementById("calDow");
+    dowEl.innerHTML = "";
+    ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].forEach(function (d) {
+      var e = document.createElement("div");
+      e.className = "cal-dow";
+      e.textContent = d;
+      dowEl.appendChild(e);
+    });
+
+    var year = calCursor.getFullYear();
+    var month = calCursor.getMonth();
+    document.getElementById("calMonthLabel").textContent =
+      calCursor.toLocaleString(undefined, { month: "long", year: "numeric" });
+
+    var firstDay = new Date(year, month, 1);
+    var startOffset = firstDay.getDay();
+    var daysInMonth = new Date(year, month + 1, 0).getDate();
+
+    var grid = document.getElementById("calGrid");
+    grid.innerHTML = "";
+
+    var tasksByDay = {};
+    tasks.forEach(function (t) {
+      var d = new Date(t.due_at);
+      var key = dayKey(d);
+      if (!tasksByDay[key]) tasksByDay[key] = [];
+      tasksByDay[key].push(t);
+    });
+
+    var today = new Date();
+
+    for (var i = 0; i < startOffset; i++) {
+      var blank = document.createElement("div");
+      blank.className = "cal-day empty";
+      grid.appendChild(blank);
+    }
+
+    for (var day = 1; day <= daysInMonth; day++) {
+      var cellDate = new Date(year, month, day);
+      var key = dayKey(cellDate);
+      var cell = document.createElement("div");
+      cell.className = "cal-day";
+      if (dayKey(today) === key) cell.classList.add("today");
+
+      var num = document.createElement("div");
+      num.className = "cal-day-num";
+      num.textContent = day;
+      cell.appendChild(num);
+
+      var dots = document.createElement("div");
+      dots.className = "cal-dots";
+      var cats = {};
+      (tasksByDay[key] || []).forEach(function (t) { cats[t.category] = true; });
+      CATS.forEach(function (c) {
+        if (cats[c]) {
+          var dot = document.createElement("div");
+          dot.className = "cal-dot " + c;
+          dots.appendChild(dot);
+        }
+      });
+      cell.appendChild(dots);
+
+      (function (key) {
+        cell.addEventListener("click", function () { showDayDetail(key, tasksByDay[key] || []); });
+      })(key);
+
+      grid.appendChild(cell);
+    }
+  }
+
+  function showDayDetail(key, dayTasks) {
+    selectedDayKey = key;
+    var box = document.getElementById("dayDetail");
+    if (dayTasks.length === 0) {
+      box.style.display = "block";
+      box.innerHTML = '<h3>' + key + '</h3><div class="empty-state">No tasks this day.</div>';
+      return;
+    }
+    box.style.display = "block";
+    box.innerHTML = "";
+    var h = document.createElement("h3");
+    h.textContent = key;
+    box.appendChild(h);
+    dayTasks
+      .sort(function (a, b) { return new Date(a.due_at) - new Date(b.due_at); })
+      .forEach(function (t) { box.appendChild(renderAgendaItem(t)); });
+  }
+
+  var modalOverlay = document.getElementById("modalOverlay");
+
+  function openModal(task) {
+    document.getElementById("modalDelete").style.display = task ? "inline-block" : "none";
+    document.getElementById("modalTitle").textContent = task ? "Edit Task" : "Add Task";
+    document.getElementById("taskId").value = task ? task.id : "";
+    document.getElementById("taskTitleInput").value = task ? task.title : "";
+    document.getElementById("taskCategoryInput").value = task ? task.category : "school";
+
+    var dueVal = "";
+    if (task) {
+      var d = new Date(task.due_at);
+      dueVal = new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+    } else {
+      var now = new Date();
+      now.setMinutes(0, 0, 0);
+      now.setHours(now.getHours() + 1);
+      dueVal = new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+    }
+    document.getElementById("taskDueInput").value = dueVal;
+
+    var existingErr = document.getElementById("modalErrorMsg");
+    if (existingErr) existingErr.textContent = "";
+
+    modalOverlay.classList.add("open");
+  }
+
+  function closeModal() {
+    modalOverlay.classList.remove("open");
+  }
+
+  document.getElementById("addFab").addEventListener("click", function () { openModal(null); });
+  document.getElementById("modalCancel").addEventListener("click", closeModal);
+
+  document.getElementById("modalSave").addEventListener("click", function () {
+    var id = document.getElementById("taskId").value;
+    var title = document.getElementById("taskTitleInput").value.trim();
+    var dueRaw = document.getElementById("taskDueInput").value;
+    var category = document.getElementById("taskCategoryInput").value;
+
+    if (!title || !dueRaw) {
+      alertInline("Please fill in title and date/time.");
+      return;
+    }
+
+    var dueIso = new Date(dueRaw).toISOString();
+
+    if (id) {
+      updateTask(id, { title: title, due_at: dueIso, category: category }).then(function (res) {
+        if (res.error) { alertInline(res.error.message); return; }
+        closeModal();
+        loadTasks();
+      });
+    } else {
+      addTask({ title: title, due_at: dueIso, category: category, done: false }).then(function (res) {
+        if (res.error) { alertInline(res.error.message); return; }
+        closeModal();
+        loadTasks();
+      });
+    }
+  });
+
+  document.getElementById("modalDelete").addEventListener("click", function () {
+    var id = document.getElementById("taskId").value;
+    if (!id) return;
+    deleteTask(id).then(function (res) {
+      if (res.error) { alertInline(res.error.message); return; }
+      closeModal();
+      loadTasks();
+    });
+  });
+
+  function alertInline(msg) {
+    console.error(msg);
+    var existing = document.getElementById("modalErrorMsg");
+    if (!existing) {
+      existing = document.createElement("div");
+      existing.id = "modalErrorMsg";
+      existing.style.color = "#e53e3e";
+      existing.style.fontSize = "0.82rem";
+      existing.style.marginTop = "8px";
+      document.querySelector(".modal").appendChild(existing);
+    }
+    existing.textContent = msg;
+  }
+
+  document.getElementById("gcalBtn").addEventListener("click", function () {
+    document.getElementById("gcalBtn").textContent = "Google Calendar sync coming soon";
+    setTimeout(function () {
+      document.getElementById("gcalBtn").textContent = "Connect Google Calendar";
+    }, 2000);
+  });
+})();
+</script>
+</body>
+</html>
