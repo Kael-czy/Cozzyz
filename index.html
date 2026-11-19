@@ -116,7 +116,17 @@
   .agenda-item.other { border-left-color: var(--other); background: linear-gradient(90deg, rgba(56,161,105,0.12), var(--card) 40%); }
   .agenda-item.entertainment { border-left-color: var(--entertainment); background: linear-gradient(90deg, rgba(128,90,213,0.12), var(--card) 40%); }
   .agenda-item.google { border-left-color: var(--google); background: linear-gradient(90deg, rgba(66,133,244,0.12), var(--card) 40%); }
+  .agenda-item.goal { border-left-color: #f5f5f5; background: linear-gradient(90deg, rgba(245,245,245,0.14), var(--card) 40%); }
+  .agenda-item.goal.escalated {
+    border-left-color: #ffd700;
+    animation: dazzle 1.8s ease-in-out infinite;
+  }
+  @keyframes dazzle {
+    0%, 100% { box-shadow: 0 0 0 rgba(255,215,0,0); }
+    50% { box-shadow: 0 0 16px rgba(255,215,0,0.55); }
+  }
   .agenda-item.done { opacity: 0.45; }
+  .goal-star { margin-right: 4px; }
   .agenda-main { flex: 1; min-width: 0; }
   .agenda-title { font-weight: 600; font-size: 1rem; }
   .agenda-title.strike { text-decoration: line-through; }
@@ -133,6 +143,8 @@
   .cat-pill.other { background: var(--other); }
   .cat-pill.entertainment { background: var(--entertainment); }
   .cat-pill.google { background: var(--google); }
+  .cat-pill.goal { background: #f5f5f5; color: #15171c; }
+  .cat-pill.urgent { background: #ffd700; color: #15171c; }
   .agenda-actions { display: flex; gap: 6px; flex-shrink: 0; }
   .icon-btn {
     background: var(--card2);
@@ -199,6 +211,7 @@
   .cal-dot.other { background: var(--other); }
   .cal-dot.entertainment { background: var(--entertainment); }
   .cal-dot.google { background: var(--google); }
+  .cal-dot.goal { background: #f5f5f5; border: 1px solid #999; }
   .day-detail {
     margin-top: 14px;
     background: var(--card);
@@ -306,10 +319,36 @@
         <option value="entertainment">Entertainment</option>
       </select>
     </div>
+    <div class="field">
+      <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+        <input type="checkbox" id="taskIsGoalInput" style="width:auto;" />
+        This is a goal (something to achieve, highlighted in white)
+      </label>
+    </div>
+    <div class="field" id="goalIntervalField" style="display:none;">
+      <label>If missed, reset it for</label>
+      <select id="taskGoalIntervalInput">
+        <option value="day">A day later</option>
+        <option value="week">A week later</option>
+        <option value="fortnight">A fortnight later</option>
+        <option value="month">A month later</option>
+      </select>
+    </div>
     <div class="modal-actions">
       <button class="btn-secondary" id="modalCancel">Cancel</button>
       <button class="btn-danger" id="modalDelete" style="display:none;">Delete</button>
       <button class="btn-primary" id="modalSave">Save</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="goalCheckOverlay">
+  <div class="modal">
+    <h2>Goal check-in</h2>
+    <p id="goalCheckText" style="color:var(--muted);"></p>
+    <div class="modal-actions">
+      <button class="btn-secondary" id="goalCheckNo">Not yet</button>
+      <button class="btn-primary" id="goalCheckYes">Done!</button>
     </div>
   </div>
 </div>
@@ -389,6 +428,8 @@
     });
   }
 
+  var goalCheckRan = false;
+
   function loadTasks() {
     supabase.from(TABLE).select("*").order("due_at", { ascending: true }).then(function (res) {
       if (res.error) {
@@ -399,6 +440,10 @@
       }
       renderAgenda();
       renderCalendar();
+      if (!goalCheckRan) {
+        goalCheckRan = true;
+        checkEndOfDayGoals();
+      }
     });
   }
 
@@ -412,6 +457,78 @@
 
   function deleteTask(id) {
     return supabase.from(TABLE).delete().eq("id", id);
+  }
+
+  // ===================== Goals: end-of-day check-in =====================
+
+  function startOfToday() {
+    var d = new Date();
+    d.setHours(0, 0, 0, 0);
+    return d;
+  }
+
+  function computeNextGoalDue(interval) {
+    var d = new Date();
+    d.setHours(9, 0, 0, 0);
+    if (interval === "week") d.setDate(d.getDate() + 7);
+    else if (interval === "fortnight") d.setDate(d.getDate() + 14);
+    else if (interval === "month") d.setMonth(d.getMonth() + 1);
+    else d.setDate(d.getDate() + 1); // default: "day"
+    return d.toISOString();
+  }
+
+  function checkEndOfDayGoals() {
+    var today0 = startOfToday();
+    var pending = tasks.filter(function (t) {
+      return t.is_goal && !t.done && new Date(t.due_at) < today0;
+    });
+    if (pending.length === 0) return;
+    askGoalQueue(pending.slice());
+  }
+
+  var goalCheckOverlay = document.getElementById("goalCheckOverlay");
+  var goalCheckCallback = null;
+
+  function showGoalCheckModal(goal, cb) {
+    goalCheckCallback = cb;
+    document.getElementById("goalCheckText").textContent = 'Did you complete "' + goal.title + '"?';
+    goalCheckOverlay.classList.add("open");
+  }
+
+  document.getElementById("goalCheckYes").addEventListener("click", function () {
+    goalCheckOverlay.classList.remove("open");
+    var cb = goalCheckCallback;
+    goalCheckCallback = null;
+    if (cb) cb(true);
+  });
+  document.getElementById("goalCheckNo").addEventListener("click", function () {
+    goalCheckOverlay.classList.remove("open");
+    var cb = goalCheckCallback;
+    goalCheckCallback = null;
+    if (cb) cb(false);
+  });
+
+  function askGoalQueue(queue) {
+    if (queue.length === 0) {
+      loadTasks();
+      return;
+    }
+    var goal = queue.shift();
+    showGoalCheckModal(goal, function (completed) {
+      if (completed) {
+        updateTask(goal.id, { done: true, escalated: false }).then(function () {
+          if (goal.gcal_event_id) pushTaskDelete(goal.gcal_event_id);
+          askGoalQueue(queue);
+        });
+      } else {
+        var newDue = computeNextGoalDue(goal.goal_reset_interval);
+        updateTask(goal.id, { due_at: newDue, escalated: true }).then(function () {
+          var updated = Object.assign({}, goal, { due_at: newDue });
+          if (goal.gcal_event_id) pushTaskUpdate(updated);
+          askGoalQueue(queue);
+        });
+      }
+    });
   }
 
   // ===================== Google Calendar two-way sync =====================
@@ -531,12 +648,19 @@
     });
   }
 
+  function gcalSummaryFor(task) {
+    if (task.is_goal) {
+      return (task.escalated ? "[GOAL - MISSED, RESCHEDULED] " : "[GOAL] ") + task.title;
+    }
+    return "[" + task.category + "] " + task.title;
+  }
+
   function pushTaskCreate(task) {
     if (!isGcalConnected()) return Promise.resolve(null);
     var start = new Date(task.due_at);
     var end = new Date(start.getTime() + 60 * 60 * 1000);
     var body = {
-      summary: "[" + task.category + "] " + task.title,
+      summary: gcalSummaryFor(task),
       start: { dateTime: start.toISOString() },
       end: { dateTime: end.toISOString() }
     };
@@ -550,7 +674,7 @@
     var start = new Date(task.due_at);
     var end = new Date(start.getTime() + 60 * 60 * 1000);
     var body = {
-      summary: "[" + task.category + "] " + task.title,
+      summary: gcalSummaryFor(task),
       start: { dateTime: start.toISOString() },
       end: { dateTime: end.toISOString() }
     };
@@ -597,7 +721,11 @@
 
     var upcoming = items
       .filter(function (t) { return !t.done && new Date(t.due_at) >= new Date(now.getTime() - 60 * 1000); })
-      .sort(function (a, b) { return new Date(a.due_at) - new Date(b.due_at); });
+      .sort(function (a, b) {
+        var ae = a.escalated ? 1 : 0, be = b.escalated ? 1 : 0;
+        if (ae !== be) return be - ae; // escalated (previously-missed) goals jump to the front
+        return new Date(a.due_at) - new Date(b.due_at);
+      });
 
     var past = items
       .filter(function (t) { return t.done || new Date(t.due_at) < new Date(now.getTime() - 60 * 1000); })
@@ -615,7 +743,9 @@
 
   function renderAgendaItem(t) {
     var el = document.createElement("div");
-    el.className = "agenda-item " + t.category + (t.done ? " done" : "");
+    var cls = "agenda-item " + t.category + (t.done ? " done" : "");
+    if (t.is_goal) cls += " goal" + (t.escalated ? " escalated" : "");
+    el.className = cls;
     var due = new Date(t.due_at);
     var isGoogle = t.source === "google";
 
@@ -624,14 +754,29 @@
 
     var titleRow = document.createElement("div");
     titleRow.className = "agenda-title" + (t.done ? " strike" : "");
-    titleRow.textContent = t.title;
+    if (t.is_goal) {
+      var star = document.createElement("span");
+      star.className = "goal-star";
+      star.textContent = t.escalated ? "⚡" : "★";
+      titleRow.appendChild(star);
+    }
+    titleRow.appendChild(document.createTextNode(t.title));
 
     var meta = document.createElement("div");
     meta.className = "agenda-meta";
+    meta.appendChild(document.createTextNode(fmtDateTime(due) + "  "));
+
+    if (t.is_goal) {
+      var goalPill = document.createElement("span");
+      goalPill.className = t.escalated ? "cat-pill urgent" : "cat-pill goal";
+      goalPill.textContent = t.escalated ? "missed - rescheduled" : "goal";
+      meta.appendChild(goalPill);
+      meta.appendChild(document.createTextNode(" "));
+    }
+
     var pill = document.createElement("span");
     pill.className = "cat-pill " + t.category;
     pill.textContent = isGoogle ? "google" : t.category;
-    meta.appendChild(document.createTextNode(fmtDateTime(due) + "  "));
     meta.appendChild(pill);
 
     main.appendChild(titleRow);
@@ -646,7 +791,9 @@
       doneBtn.textContent = t.done ? "↺" : "✓";
       doneBtn.title = t.done ? "Mark not done" : "Mark done";
       doneBtn.addEventListener("click", function () {
-        updateTask(t.id, { done: !t.done }).then(loadTasks);
+        var patch = { done: !t.done };
+        if (!t.done && t.is_goal) patch.escalated = false;
+        updateTask(t.id, patch).then(loadTasks);
       });
 
       var editBtn = document.createElement("button");
@@ -707,6 +854,7 @@
       if (!tasksByDay[key]) tasksByDay[key] = [];
       tasksByDay[key].push(t);
     });
+    var dotKeyFor = function (t) { return t.is_goal ? "goal" : t.category; };
 
     var today = new Date();
 
@@ -716,7 +864,7 @@
       grid.appendChild(blank);
     }
 
-    var CATS_WITH_GOOGLE = CATS.concat(["google"]);
+    var CATS_WITH_GOOGLE = CATS.concat(["google", "goal"]);
 
     for (var day = 1; day <= daysInMonth; day++) {
       var cellDate = new Date(year, month, day);
@@ -733,7 +881,7 @@
       var dots = document.createElement("div");
       dots.className = "cal-dots";
       var cats = {};
-      (tasksByDay[key] || []).forEach(function (t) { cats[t.category] = true; });
+      (tasksByDay[key] || []).forEach(function (t) { cats[dotKeyFor(t)] = true; });
       CATS_WITH_GOOGLE.forEach(function (c) {
         if (cats[c]) {
           var dot = document.createElement("div");
@@ -777,6 +925,9 @@
     document.getElementById("taskId").value = task ? task.id : "";
     document.getElementById("taskTitleInput").value = task ? task.title : "";
     document.getElementById("taskCategoryInput").value = task ? task.category : "school";
+    document.getElementById("taskIsGoalInput").checked = task ? !!task.is_goal : false;
+    document.getElementById("taskGoalIntervalInput").value = (task && task.goal_reset_interval) ? task.goal_reset_interval : "day";
+    document.getElementById("goalIntervalField").style.display = (task && task.is_goal) ? "block" : "none";
 
     var dueVal = "";
     if (task) {
@@ -802,12 +953,17 @@
 
   document.getElementById("addFab").addEventListener("click", function () { openModal(null); });
   document.getElementById("modalCancel").addEventListener("click", closeModal);
+  document.getElementById("taskIsGoalInput").addEventListener("change", function () {
+    document.getElementById("goalIntervalField").style.display = this.checked ? "block" : "none";
+  });
 
   document.getElementById("modalSave").addEventListener("click", function () {
     var id = document.getElementById("taskId").value;
     var title = document.getElementById("taskTitleInput").value.trim();
     var dueRaw = document.getElementById("taskDueInput").value;
     var category = document.getElementById("taskCategoryInput").value;
+    var isGoal = document.getElementById("taskIsGoalInput").checked;
+    var goalInterval = document.getElementById("taskGoalIntervalInput").value;
 
     if (!title || !dueRaw) {
       alertInline("Please fill in title and date/time.");
@@ -818,19 +974,37 @@
 
     if (id) {
       var existing = tasks.filter(function (t) { return String(t.id) === String(id); })[0];
-      updateTask(id, { title: title, due_at: dueIso, category: category }).then(function (res) {
+      var patch = {
+        title: title,
+        due_at: dueIso,
+        category: category,
+        is_goal: isGoal,
+        goal_reset_interval: isGoal ? goalInterval : null
+      };
+      if (existing && existing.escalated && !isGoal) patch.escalated = false;
+      updateTask(id, patch).then(function (res) {
         if (res.error) { alertInline(res.error.message); return; }
         closeModal();
         if (existing) {
           existing.title = title;
           existing.due_at = dueIso;
           existing.category = category;
+          existing.is_goal = isGoal;
+          existing.goal_reset_interval = isGoal ? goalInterval : null;
           pushTaskUpdate(existing);
         }
         loadTasks();
       });
     } else {
-      addTask({ title: title, due_at: dueIso, category: category, done: false }).then(function (res) {
+      addTask({
+        title: title,
+        due_at: dueIso,
+        category: category,
+        done: false,
+        is_goal: isGoal,
+        goal_reset_interval: isGoal ? goalInterval : null,
+        escalated: false
+      }).then(function (res) {
         if (res.error) { alertInline(res.error.message); return; }
         closeModal();
         var newRow = res.data && res.data[0];
