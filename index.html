@@ -1613,10 +1613,10 @@
       btn.addEventListener("click", function () {
         if (p.key === "default") {
           applyBackground("default", "");
-          saveProfileSettings({ bg_type: "default", bg_value: "" });
+          saveProfileSettings({ bg_type: "default", bg_value: "" }).then(function () {});
         } else {
           applyBackground("gradient", p.css);
-          saveProfileSettings({ bg_type: "gradient", bg_value: p.css });
+          saveProfileSettings({ bg_type: "gradient", bg_value: p.css }).then(function () {});
         }
       });
       wrap.appendChild(btn);
@@ -1656,7 +1656,7 @@
   document.getElementById("bgColorApplyBtn").addEventListener("click", function () {
     var color = document.getElementById("bgColorInput").value;
     applyBackground("solid", color);
-    saveProfileSettings({ bg_type: "solid", bg_value: color });
+    saveProfileSettings({ bg_type: "solid", bg_value: color }).then(function () {});
   });
 
   document.getElementById("bgUploadInput").addEventListener("change", function (e) {
@@ -1683,7 +1683,7 @@
   document.getElementById("orientationInput").addEventListener("change", function () {
     var val = this.value;
     applyOrientation(val);
-    saveProfileSettings({ orientation_pref: val });
+    saveProfileSettings({ orientation_pref: val }).then(function () {});
   });
 
   document.getElementById("rearrangeToggle").addEventListener("change", function () {
@@ -1733,7 +1733,7 @@
       var yPct = (rect.top / window.innerHeight) * 100;
       var layout = (profileSettingsCache && profileSettingsCache.layout) || {};
       layout[el.id] = { xPct: xPct, yPct: yPct };
-      saveProfileSettings({ layout: layout });
+      saveProfileSettings({ layout: layout }).then(function () {});
     });
   }
 
