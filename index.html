@@ -442,7 +442,7 @@
 
 <div id="app">
   <header>
-    <h1>Bazement</h1>
+    <h1>Bazement <span id="adminBadge" style="display:none; font-size:0.6rem; vertical-align:middle; background:#4f66f0; color:white; padding:2px 7px; border-radius:6px; margin-left:6px;">ADMIN</span></h1>
     <button id="gcalBtn" title="Connect your Google Calendar">Connect Google Calendar</button>
     <div id="gcalStatus"></div>
   </header>
@@ -554,6 +554,8 @@
   var SUPABASE_KEY = "sb_publishable_gYGE2QVBELzeiP1KqB1_cA_WEDtVgmw";
   var TABLE = "cozzyz_tasks";
   var PASSCODE = "Zazzytoocool";
+  var ADMIN_PASSCODE = "Zazytocol";
+  var isAdmin = false;
 
   // --- Welcome message, rotates languages every time the app opens ---
   var WELCOME_MESSAGES = [
@@ -593,6 +595,7 @@
   // --- Multi-user profiles ---
   var PROFILE = null;
   var SESSION_KEY = null;
+  var ADMIN_KEY = null;
   var viewingOwner = null;
   var GCAL_TOKEN_KEY = null;
   var GCAL_EVER_CONNECTED_KEY = null;
@@ -660,8 +663,10 @@
     }
 
     // default profile: kael
-    if (val === PASSCODE) {
+    if (val === PASSCODE || val === ADMIN_PASSCODE) {
+      isAdmin = (val === ADMIN_PASSCODE);
       sessionStorage.setItem(SESSION_KEY, "1");
+      sessionStorage.setItem(ADMIN_KEY, isAdmin ? "1" : "0");
       enterApp();
     } else {
       document.getElementById("gateError").textContent = "Incorrect passcode.";
@@ -681,6 +686,8 @@
     document.getElementById("app").style.display = "block";
     document.getElementById("addFab").style.display = "block";
     document.getElementById("settingsBtn").style.display = "block";
+    var badge = document.getElementById("adminBadge");
+    if (badge) badge.style.display = isAdmin ? "inline-block" : "none";
     init();
   }
 
@@ -708,6 +715,7 @@
   function setProfile(name) {
     PROFILE = name;
     SESSION_KEY = "cozzyz_unlocked_" + PROFILE;
+    ADMIN_KEY = "cozzyz_admin_" + PROFILE;
     viewingOwner = PROFILE;
     GCAL_TOKEN_KEY = "cozzyz_gcal_token_" + PROFILE;
     GCAL_EVER_CONNECTED_KEY = "cozzyz_gcal_ever_connected_" + PROFILE;
@@ -721,6 +729,7 @@
     document.getElementById("welcomeMsg").style.display = "none";
 
     if (sessionStorage.getItem(SESSION_KEY) === "1") {
+      isAdmin = sessionStorage.getItem(ADMIN_KEY) === "1";
       enterApp();
       return;
     }
