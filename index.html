@@ -366,6 +366,38 @@
   .btn-secondary { background: var(--card2); color: var(--text); border: 1px solid var(--border) !important; }
   .btn-danger { background: var(--school); color: white; }
   footer.app-footer { text-align: center; color: var(--muted); font-size: 0.75rem; padding: 20px 0 0; }
+  .todo-add { display: flex; gap: 8px; margin-bottom: 16px; }
+  .todo-add input {
+    flex: 1;
+    background: var(--card2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 10px 12px;
+    border-radius: 10px;
+    font-size: 0.92rem;
+  }
+  .todo-add button {
+    background: #4f66f0;
+    color: white;
+    border: none;
+    padding: 10px 16px;
+    border-radius: 10px;
+    cursor: pointer;
+    font-size: 0.92rem;
+    flex-shrink: 0;
+  }
+  .todo-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: var(--card);
+    border-radius: 10px;
+    padding: 10px 12px;
+    margin-bottom: 8px;
+  }
+  .todo-item input[type="checkbox"] { width: 18px; height: 18px; flex-shrink: 0; cursor: pointer; }
+  .todo-text { flex: 1; font-size: 0.95rem; }
+  .todo-text.done { text-decoration: line-through; color: var(--muted); }
 </style>
 </head>
 <body>
@@ -450,6 +482,7 @@
   <div class="tabs">
     <button id="tabAgendaBtn" class="active">Agenda</button>
     <button id="tabCalendarBtn">Calendar</button>
+    <button id="tabTodoBtn">To-Do</button>
   </div>
 
   <div class="quickadd">
@@ -473,6 +506,14 @@
     <div class="cal-grid" id="calDow"></div>
     <div class="cal-grid" id="calGrid"></div>
     <div id="dayDetail" class="day-detail" style="display:none;"></div>
+  </div>
+
+  <div id="todoView" class="view">
+    <div class="todo-add">
+      <input type="text" id="todoAddInput" placeholder="e.g. Buy batteries" autocomplete="off" />
+      <button id="todoAddBtn">Add</button>
+    </div>
+    <div id="todoList"></div>
   </div>
 
   <button id="viewToggleBtn" class="view-toggle-btn"></button>
@@ -510,6 +551,16 @@
         <option value="school">School</option>
         <option value="other">Other</option>
         <option value="entertainment">Entertainment</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>Repeats</label>
+      <select id="taskRecurrenceInput">
+        <option value="">Does not repeat</option>
+        <option value="day">Every day</option>
+        <option value="week">Every week</option>
+        <option value="fortnight">Every fortnight</option>
+        <option value="month">Every month</option>
       </select>
     </div>
     <div class="field">
@@ -794,6 +845,28 @@
     return supabase.from(TABLE).insert(task).select();
   }
 
+  // Builds the list of occurrence dates for a recurring task.
+  // Caps total occurrences so we don't generate unbounded rows: ~6 months of
+  // daily, ~1 year of weekly/fortnightly/monthly.
+  function buildRecurrenceDates(startIso, recurrence) {
+    var start = new Date(startIso);
+    var count, stepDays, stepMonths;
+    if (recurrence === "day") { count = 180; stepDays = 1; }
+    else if (recurrence === "week") { count = 52; stepDays = 7; }
+    else if (recurrence === "fortnight") { count = 26; stepDays = 14; }
+    else if (recurrence === "month") { count = 12; stepMonths = 1; }
+    else return [start];
+
+    var dates = [];
+    for (var i = 0; i < count; i++) {
+      var d = new Date(start);
+      if (stepMonths) d.setMonth(d.getMonth() + i * stepMonths);
+      else d.setDate(d.getDate() + i * stepDays);
+      dates.push(d);
+    }
+    return dates;
+  }
+
   function updateTask(id, patch) {
     return supabase.from(TABLE).update(patch).eq("id", id);
   }
@@ -1038,14 +1111,94 @@
 
   document.getElementById("tabAgendaBtn").addEventListener("click", function () { switchView("agenda"); });
   document.getElementById("tabCalendarBtn").addEventListener("click", function () { switchView("calendar"); });
+  document.getElementById("tabTodoBtn").addEventListener("click", function () { switchView("todo"); });
 
   function switchView(v) {
     currentView = v;
     document.getElementById("tabAgendaBtn").classList.toggle("active", v === "agenda");
     document.getElementById("tabCalendarBtn").classList.toggle("active", v === "calendar");
+    document.getElementById("tabTodoBtn").classList.toggle("active", v === "todo");
     document.getElementById("agendaView").classList.toggle("active", v === "agenda");
     document.getElementById("calendarView").classList.toggle("active", v === "calendar");
+    document.getElementById("todoView").classList.toggle("active", v === "todo");
+    if (v === "todo") loadTodos();
   }
+
+  // ===================== To-Do list (small items, separate from tasks) =====================
+
+  var todos = [];
+
+  function loadTodos() {
+    return supabase.from("cozzyz_todos").select("*").eq("owner", PROFILE).order("created_at", { ascending: true }).then(function (res) {
+      if (res.error) {
+        console.error("Load todos error:", res.error.message);
+        todos = [];
+      } else {
+        todos = res.data || [];
+      }
+      renderTodoList();
+    });
+  }
+
+  function renderTodoList() {
+    var list = document.getElementById("todoList");
+    list.innerHTML = "";
+    if (todos.length === 0) {
+      list.innerHTML = '<div class="empty-state">Nothing on your to-do list.</div>';
+      return;
+    }
+    todos.forEach(function (t) {
+      var row = document.createElement("div");
+      row.className = "todo-item";
+
+      var cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.checked = !!t.done;
+      cb.addEventListener("change", function () {
+        supabase.from("cozzyz_todos").update({ done: cb.checked }).eq("id", t.id).then(function (res) {
+          if (res.error) { console.error(res.error.message); return; }
+          t.done = cb.checked;
+          renderTodoList();
+        });
+      });
+
+      var text = document.createElement("div");
+      text.className = "todo-text" + (t.done ? " done" : "");
+      text.textContent = t.text;
+
+      var delBtn = document.createElement("button");
+      delBtn.className = "icon-btn";
+      delBtn.textContent = "✕";
+      delBtn.title = "Delete";
+      delBtn.addEventListener("click", function () {
+        supabase.from("cozzyz_todos").delete().eq("id", t.id).then(function (res) {
+          if (res.error) { console.error(res.error.message); return; }
+          loadTodos();
+        });
+      });
+
+      row.appendChild(cb);
+      row.appendChild(text);
+      row.appendChild(delBtn);
+      list.appendChild(row);
+    });
+  }
+
+  function addTodo() {
+    var input = document.getElementById("todoAddInput");
+    var text = input.value.trim();
+    if (!text) return;
+    supabase.from("cozzyz_todos").insert({ owner: PROFILE, text: text, done: false }).select().then(function (res) {
+      if (res.error) { console.error(res.error.message); return; }
+      input.value = "";
+      loadTodos();
+    });
+  }
+
+  document.getElementById("todoAddBtn").addEventListener("click", addTodo);
+  document.getElementById("todoAddInput").addEventListener("keydown", function (e) {
+    if (e.key === "Enter") addTodo();
+  });
 
   // ===================== Shared viewing (Kael <-> Zaza) =====================
 
@@ -1340,6 +1493,9 @@
     document.getElementById("taskIsGoalInput").checked = task ? !!task.is_goal : false;
     document.getElementById("taskGoalIntervalInput").value = (task && task.goal_reset_interval) ? task.goal_reset_interval : "day";
     document.getElementById("goalIntervalField").style.display = (task && task.is_goal) ? "block" : "none";
+    document.getElementById("taskRecurrenceInput").value = "";
+    document.getElementById("taskRecurrenceInput").disabled = !!task;
+    document.getElementById("taskRecurrenceInput").title = task ? "Repeats can only be set when creating a new task" : "";
 
     function localDateParts(d) {
       var local = new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
@@ -1385,6 +1541,9 @@
     document.getElementById("taskIsGoalInput").checked = false;
     document.getElementById("taskGoalIntervalInput").value = "day";
     document.getElementById("goalIntervalField").style.display = "none";
+    document.getElementById("taskRecurrenceInput").value = "";
+    document.getElementById("taskRecurrenceInput").disabled = false;
+    document.getElementById("taskRecurrenceInput").title = "";
 
     var dueParts = (fields.dueLocal || "").split("T");
     var startD = new Date(fields.dueLocal);
@@ -1421,6 +1580,7 @@
     var category = document.getElementById("taskCategoryInput").value;
     var isGoal = document.getElementById("taskIsGoalInput").checked;
     var goalInterval = document.getElementById("taskGoalIntervalInput").value;
+    var recurrence = document.getElementById("taskRecurrenceInput").value;
 
     if (!title || !dateRaw || !startRaw || !endRaw) {
       alertInline("Please fill in title, date, start time, and end time.");
@@ -1460,6 +1620,29 @@
         }
         loadTasks();
       });
+    } else if (recurrence) {
+      var groupId = "rec_" + Date.now() + "_" + Math.random().toString(36).slice(2, 8);
+      var occurrences = buildRecurrenceDates(dueIso, recurrence);
+      var rows = occurrences.map(function (d) {
+        return {
+          title: title,
+          due_at: d.toISOString(),
+          category: category,
+          done: false,
+          is_goal: isGoal,
+          goal_reset_interval: isGoal ? goalInterval : null,
+          escalated: false,
+          duration_minutes: durationMinutes,
+          owner: PROFILE,
+          recurrence: recurrence,
+          recurrence_group_id: groupId
+        };
+      });
+      addTask(rows).then(function (res) {
+        if (res.error) { alertInline(res.error.message); return; }
+        closeModal();
+        loadTasks();
+      });
     } else {
       addTask({
         title: title,
@@ -1470,7 +1653,9 @@
         goal_reset_interval: isGoal ? goalInterval : null,
         escalated: false,
         duration_minutes: durationMinutes,
-        owner: PROFILE
+        owner: PROFILE,
+        recurrence: null,
+        recurrence_group_id: null
       }).then(function (res) {
         if (res.error) { alertInline(res.error.message); return; }
         closeModal();
