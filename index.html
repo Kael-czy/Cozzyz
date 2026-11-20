@@ -26,6 +26,47 @@
     background: var(--bg);
     color: var(--text);
   }
+  body.has-wallpaper #app, body.has-wallpaper #gate {
+    background: rgba(15, 17, 21, 0.82);
+  }
+  .settings-fab {
+    position: fixed;
+    top: 16px;
+    right: 16px;
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    background: var(--card2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-size: 1.15rem;
+    cursor: pointer;
+    z-index: 41;
+  }
+  .settings-modal { max-width: 420px; max-height: 82vh; overflow-y: auto; }
+  .bg-presets { display: flex; gap: 8px; flex-wrap: wrap; }
+  .bg-preset-swatch {
+    width: 48px;
+    height: 48px;
+    border-radius: 8px;
+    border: 2px solid var(--border);
+    cursor: pointer;
+    background-size: cover;
+    background-position: center;
+    background-color: var(--card2);
+  }
+  .bg-color-row { display: flex; gap: 8px; align-items: center; }
+  .bg-color-row input[type="color"] {
+    width: 48px;
+    height: 40px;
+    padding: 2px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--card2);
+  }
+  .bg-color-row button { flex: 1; }
+  .draggable-active { outline: 2px dashed #4f66f0; outline-offset: 4px; }
+  .draggable-active:active { cursor: grabbing; }
   #app { display: none; max-width: 760px; margin: 0 auto; padding: 16px 16px 80px; }
   #gate {
     min-height: 100vh;
@@ -324,6 +365,58 @@
   <div id="gateError"></div>
 </div>
 
+<button id="settingsBtn" class="settings-fab" title="Settings" style="display:none;">&#9881;</button>
+
+<div class="modal-overlay" id="settingsOverlay">
+  <div class="modal settings-modal">
+    <h2>Settings</h2>
+
+    <div class="field">
+      <label>Background colour</label>
+      <div class="bg-color-row">
+        <input type="color" id="bgColorInput" value="#0f1115" />
+        <button class="btn-secondary" id="bgColorApplyBtn" type="button">Use this colour</button>
+      </div>
+    </div>
+
+    <div class="field">
+      <label>Preset wallpapers</label>
+      <div class="bg-presets" id="bgPresets"></div>
+    </div>
+
+    <div class="field">
+      <label>Upload your own wallpaper</label>
+      <input type="file" id="bgUploadInput" accept="image/*" />
+      <div class="quickadd-hint" id="bgUploadStatus"></div>
+    </div>
+
+    <div class="field">
+      <label>Orientation</label>
+      <select id="orientationInput">
+        <option value="auto">Automatic</option>
+        <option value="portrait">Lock portrait</option>
+        <option value="landscape">Lock landscape</option>
+      </select>
+      <div class="quickadd-hint">Locking only takes effect when the app is added to your home screen or opened full-screen — most browsers block it in a normal tab.</div>
+    </div>
+
+    <div class="field">
+      <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+        <input type="checkbox" id="rearrangeToggle" style="width:auto;" />
+        Rearrange buttons (drag them anywhere on screen, then switch this back off)
+      </label>
+    </div>
+
+    <div class="field">
+      <button class="btn-secondary" id="resetLayoutBtn" type="button" style="width:100%;">Reset button positions</button>
+    </div>
+
+    <div class="modal-actions">
+      <button class="btn-primary" id="settingsCloseBtn" type="button">Done</button>
+    </div>
+  </div>
+</div>
+
 <div id="app">
   <header>
     <h1>Cozzyz</h1>
@@ -452,6 +545,8 @@
   var SESSION_KEY = "cozzyz_unlocked_" + PROFILE;
   var viewingOwner = PROFILE;
   var zazaProfileCache = null;
+  var rearrangeMode = false;
+  var profileSettingsCache = null;
 
   function otherOwner(o) { return o === "kael" ? "zaza" : "kael"; }
   function displayName(o) { return o === "kael" ? "Cozzyz" : "Zaza"; }
@@ -532,12 +627,14 @@
     document.getElementById("gate").style.display = "none";
     document.getElementById("app").style.display = "block";
     document.getElementById("addFab").style.display = "block";
+    document.getElementById("settingsBtn").style.display = "block";
     init();
   }
 
   function init() {
     ensureAuth().then(function () {
       loadTasks();
+      loadProfileSettings();
     });
     initGoogleCalendar();
     updateViewToggleUI();
@@ -725,6 +822,7 @@
     setupClient();
 
     btn.addEventListener("click", function () {
+      if (rearrangeMode) return;
       if (isGcalConnected()) return;
       if (gcalTokenClient) {
         gcalTokenClient.requestAccessToken({ prompt: "consent" });
@@ -879,6 +977,7 @@
   }
 
   document.getElementById("viewToggleBtn").addEventListener("click", function () {
+    if (rearrangeMode) return;
     viewingOwner = viewingOwner === PROFILE ? otherOwner(PROFILE) : PROFILE;
     updateViewToggleUI();
     if (viewingOwner !== PROFILE) {
@@ -1187,7 +1286,7 @@
     modalOverlay.classList.remove("open");
   }
 
-  document.getElementById("addFab").addEventListener("click", function () { openModal(null); });
+  document.getElementById("addFab").addEventListener("click", function () { if (rearrangeMode) return; openModal(null); });
   document.getElementById("modalCancel").addEventListener("click", closeModal);
   document.getElementById("taskIsGoalInput").addEventListener("change", function () {
     document.getElementById("goalIntervalField").style.display = this.checked ? "block" : "none";
@@ -1425,6 +1524,222 @@
   document.getElementById("quickAddBtn").addEventListener("click", runQuickAdd);
   document.getElementById("quickAddInput").addEventListener("keydown", function (e) {
     if (e.key === "Enter") runQuickAdd();
+  });
+
+  // ===================== Settings: background, orientation, layout =====================
+
+  var BG_PRESETS = [
+    { key: "default", label: "Default", css: "" },
+    { key: "sunset", label: "Sunset", css: "linear-gradient(135deg, #ff7e5f, #feb47b)" },
+    { key: "ocean", label: "Ocean", css: "linear-gradient(135deg, #2193b0, #6dd5ed)" },
+    { key: "forest", label: "Forest", css: "linear-gradient(135deg, #134e5e, #71b280)" },
+    { key: "night", label: "Night", css: "linear-gradient(135deg, #0f2027, #203a43, #2c5364)" },
+    { key: "candy", label: "Candy", css: "linear-gradient(135deg, #ee9ca7, #ffdde1)" }
+  ];
+
+  var DRAGGABLE_IDS = ["addFab", "gcalBtn", "viewToggleBtn"];
+
+  function applyBackground(type, value) {
+    var body = document.body;
+    if (type === "solid" && value) {
+      body.style.backgroundImage = "";
+      body.style.background = value;
+      body.classList.remove("has-wallpaper");
+    } else if (type === "gradient" && value) {
+      body.style.background = "";
+      body.style.backgroundImage = value;
+      body.style.backgroundSize = "cover";
+      body.classList.add("has-wallpaper");
+    } else if (type === "image" && value) {
+      body.style.background = "";
+      body.style.backgroundImage = "url('" + value + "')";
+      body.style.backgroundSize = "cover";
+      body.style.backgroundPosition = "center";
+      body.style.backgroundAttachment = "fixed";
+      body.classList.add("has-wallpaper");
+    } else {
+      body.style.background = "";
+      body.style.backgroundImage = "";
+      body.classList.remove("has-wallpaper");
+    }
+  }
+
+  function applyOrientation(pref) {
+    try {
+      if (!screen.orientation || !screen.orientation.lock) return;
+      if (pref === "portrait") {
+        screen.orientation.lock("portrait").catch(function () {});
+      } else if (pref === "landscape") {
+        screen.orientation.lock("landscape").catch(function () {});
+      } else if (screen.orientation.unlock) {
+        screen.orientation.unlock();
+      }
+    } catch (e) {}
+  }
+
+  function applyLayout(layout) {
+    layout = layout || {};
+    DRAGGABLE_IDS.forEach(function (id) {
+      var el = document.getElementById(id);
+      if (!el) return;
+      var pos = layout[id];
+      if (pos) {
+        el.style.position = "fixed";
+        el.style.left = pos.xPct + "%";
+        el.style.top = pos.yPct + "%";
+        el.style.right = "auto";
+        el.style.bottom = "auto";
+        el.style.zIndex = 45;
+      } else {
+        el.style.position = "";
+        el.style.left = "";
+        el.style.top = "";
+        el.style.right = "";
+        el.style.bottom = "";
+        el.style.zIndex = "";
+      }
+    });
+  }
+
+  function renderBgPresets() {
+    var wrap = document.getElementById("bgPresets");
+    wrap.innerHTML = "";
+    BG_PRESETS.forEach(function (p) {
+      var btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "bg-preset-swatch";
+      btn.title = p.label;
+      btn.style.background = p.css || "var(--card2)";
+      btn.addEventListener("click", function () {
+        if (p.key === "default") {
+          applyBackground("default", "");
+          saveProfileSettings({ bg_type: "default", bg_value: "" });
+        } else {
+          applyBackground("gradient", p.css);
+          saveProfileSettings({ bg_type: "gradient", bg_value: p.css });
+        }
+      });
+      wrap.appendChild(btn);
+    });
+  }
+  renderBgPresets();
+
+  function loadProfileSettings() {
+    return supabase.from("cozzyz_profiles").select("bg_type,bg_value,orientation_pref,layout").eq("name", PROFILE).then(function (res) {
+      var row = (res.data && res.data[0]) || {};
+      profileSettingsCache = {
+        bg_type: row.bg_type || "default",
+        bg_value: row.bg_value || "",
+        orientation_pref: row.orientation_pref || "auto",
+        layout: row.layout || {}
+      };
+      applyBackground(profileSettingsCache.bg_type, profileSettingsCache.bg_value);
+      applyOrientation(profileSettingsCache.orientation_pref);
+      applyLayout(profileSettingsCache.layout);
+      document.getElementById("orientationInput").value = profileSettingsCache.orientation_pref;
+    });
+  }
+
+  function saveProfileSettings(patch) {
+    if (!profileSettingsCache) profileSettingsCache = {};
+    Object.assign(profileSettingsCache, patch);
+    return supabase.from("cozzyz_profiles").update(patch).eq("name", PROFILE);
+  }
+
+  document.getElementById("settingsBtn").addEventListener("click", function () {
+    document.getElementById("settingsOverlay").classList.add("open");
+  });
+  document.getElementById("settingsCloseBtn").addEventListener("click", function () {
+    document.getElementById("settingsOverlay").classList.remove("open");
+  });
+
+  document.getElementById("bgColorApplyBtn").addEventListener("click", function () {
+    var color = document.getElementById("bgColorInput").value;
+    applyBackground("solid", color);
+    saveProfileSettings({ bg_type: "solid", bg_value: color });
+  });
+
+  document.getElementById("bgUploadInput").addEventListener("change", function (e) {
+    var file = e.target.files[0];
+    if (!file) return;
+    var status = document.getElementById("bgUploadStatus");
+    status.textContent = "Uploading...";
+    var safeName = file.name.replace(/[^a-zA-Z0-9_.-]/g, "_");
+    var path = PROFILE + "/" + Date.now() + "_" + safeName;
+    supabase.storage.from("cozzyz-backgrounds").upload(path, file, { upsert: true }).then(function (res) {
+      if (res.error) {
+        status.textContent = "Upload failed: " + res.error.message;
+        return;
+      }
+      var pub = supabase.storage.from("cozzyz-backgrounds").getPublicUrl(path);
+      var url = pub.data.publicUrl;
+      applyBackground("image", url);
+      saveProfileSettings({ bg_type: "image", bg_value: url }).then(function () {
+        status.textContent = "Wallpaper updated.";
+      });
+    });
+  });
+
+  document.getElementById("orientationInput").addEventListener("change", function () {
+    var val = this.value;
+    applyOrientation(val);
+    saveProfileSettings({ orientation_pref: val });
+  });
+
+  document.getElementById("rearrangeToggle").addEventListener("change", function () {
+    rearrangeMode = this.checked;
+    DRAGGABLE_IDS.forEach(function (id) {
+      var el = document.getElementById(id);
+      if (el) el.classList.toggle("draggable-active", rearrangeMode);
+    });
+    if (rearrangeMode) {
+      document.getElementById("settingsOverlay").classList.remove("open");
+    }
+  });
+
+  document.getElementById("resetLayoutBtn").addEventListener("click", function () {
+    saveProfileSettings({ layout: {} }).then(function () {
+      applyLayout({});
+    });
+  });
+
+  function enableDragging(el) {
+    var dragging = false, offsetX = 0, offsetY = 0;
+    el.addEventListener("pointerdown", function (e) {
+      if (!rearrangeMode) return;
+      dragging = true;
+      try { el.setPointerCapture(e.pointerId); } catch (err) {}
+      var rect = el.getBoundingClientRect();
+      offsetX = e.clientX - rect.left;
+      offsetY = e.clientY - rect.top;
+      e.preventDefault();
+    });
+    el.addEventListener("pointermove", function (e) {
+      if (!dragging) return;
+      var x = e.clientX - offsetX;
+      var y = e.clientY - offsetY;
+      el.style.position = "fixed";
+      el.style.left = x + "px";
+      el.style.top = y + "px";
+      el.style.right = "auto";
+      el.style.bottom = "auto";
+      el.style.zIndex = 45;
+    });
+    el.addEventListener("pointerup", function () {
+      if (!dragging) return;
+      dragging = false;
+      var rect = el.getBoundingClientRect();
+      var xPct = (rect.left / window.innerWidth) * 100;
+      var yPct = (rect.top / window.innerHeight) * 100;
+      var layout = (profileSettingsCache && profileSettingsCache.layout) || {};
+      layout[el.id] = { xPct: xPct, yPct: yPct };
+      saveProfileSettings({ layout: layout });
+    });
+  }
+
+  DRAGGABLE_IDS.forEach(function (id) {
+    var el = document.getElementById(id);
+    if (el) enableDragging(el);
   });
 
   function alertInline(msg) {
