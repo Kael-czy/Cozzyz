@@ -98,6 +98,18 @@
     cursor: pointer;
   }
   #gateError { color: var(--school); font-size: 0.85rem; min-height: 1em; }
+  #welcomeMsg { font-size: 1.05rem; min-height: 1.6em; max-width: 320px; }
+  .profile-tab-row { display: flex; gap: 10px; }
+  .profile-tab {
+    background: var(--card);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 12px 24px;
+    border-radius: 10px;
+    font-size: 1rem;
+    cursor: pointer;
+  }
+  .profile-tab:hover { border-color: #4f66f0; }
   header {
     display: flex;
     justify-content: space-between;
@@ -360,10 +372,19 @@
 
 <div id="gate">
   <h1>Cozzyz</h1>
-  <p id="gateSubtitle" style="color:var(--muted); margin-top:-8px;">Enter passcode to continue</p>
-  <input type="password" id="gateInput" placeholder="Passcode" autocomplete="off" />
-  <input type="password" id="gateInputConfirm" placeholder="Confirm passcode" autocomplete="off" style="display:none;" />
-  <button id="gateBtn">Unlock</button>
+  <p id="welcomeMsg"></p>
+
+  <div id="profilePicker" class="profile-tab-row">
+    <button type="button" class="profile-tab" id="profileTabKael">Kael</button>
+    <button type="button" class="profile-tab" id="profileTabZaza">Zaza</button>
+  </div>
+
+  <div id="passcodeSection" style="display:none; flex-direction:column; align-items:center; gap:14px;">
+    <p id="gateSubtitle" style="color:var(--muted); margin-top:-8px;">Enter passcode to continue</p>
+    <input type="password" id="gateInput" placeholder="Passcode" autocomplete="off" />
+    <input type="password" id="gateInputConfirm" placeholder="Confirm passcode" autocomplete="off" style="display:none;" />
+    <button id="gateBtn">Unlock</button>
+  </div>
   <div id="gateError"></div>
 </div>
 
@@ -532,26 +553,49 @@
   var SUPABASE_URL = "https://dnrumlfxnqbqxbkxdzum.supabase.co";
   var SUPABASE_KEY = "sb_publishable_gYGE2QVBELzeiP1KqB1_cA_WEDtVgmw";
   var TABLE = "cozzyz_tasks";
-  var PASSCODE = "cozzyz2026";
+  var PASSCODE = "Zazzytoocool";
 
-  // --- Multi-user profiles ---
-  function resolveProfile() {
-    var params = new URLSearchParams(window.location.search);
-    var fromUrl = params.get("user");
-    if (fromUrl === "zaza" || fromUrl === "kael") {
-      try { localStorage.setItem("cozzyz_profile", fromUrl); } catch (e) {}
-      return fromUrl;
-    }
-    try {
-      var stored = localStorage.getItem("cozzyz_profile");
-      if (stored === "zaza" || stored === "kael") return stored;
-    } catch (e) {}
-    return "kael";
+  // --- Welcome message, rotates languages every time the app opens ---
+  var WELCOME_MESSAGES = [
+    "Welcome",
+    "Bienvenido",
+    "Bienvenue",
+    "Willkommen",
+    "Benvenuto",
+    "Bem-vindo",
+    "Welkom",
+    "Välkommen",
+    "Velkommen",
+    "Tervetuloa",
+    "Witaj",
+    "Vítejte",
+    "Üdvözöljük",
+    "Dobrodošli",
+    "Dobro došli",
+    "Добро пожаловать",
+    "Καλώς ήρθες",
+    "Hoş geldiniz",
+    "أهلاً وسهلاً",
+    "ברוך הבא",
+    "स्वागत है",
+    "ยินดีต้อนรับ",
+    "Chào mừng",
+    "欢迎",
+    "歓迎します",
+    "환영합니다"
+  ];
+
+  function renderWelcomeMessage() {
+    var msg = WELCOME_MESSAGES[Math.floor(Math.random() * WELCOME_MESSAGES.length)];
+    document.getElementById("welcomeMsg").textContent = msg;
   }
 
-  var PROFILE = resolveProfile();
-  var SESSION_KEY = "cozzyz_unlocked_" + PROFILE;
-  var viewingOwner = PROFILE;
+  // --- Multi-user profiles ---
+  var PROFILE = null;
+  var SESSION_KEY = null;
+  var viewingOwner = null;
+  var GCAL_TOKEN_KEY = null;
+  var GCAL_EVER_CONNECTED_KEY = null;
   var zazaProfileCache = null;
   var rearrangeMode = false;
   var profileSettingsCache = null;
@@ -562,8 +606,6 @@
   // --- Google Calendar sync config ---
   var GCAL_CLIENT_ID = "483435323151-0n5tdi81e6gr7nlrtokva1o47ki6smem.apps.googleusercontent.com";
   var GCAL_SCOPE = "https://www.googleapis.com/auth/calendar.events";
-  var GCAL_TOKEN_KEY = "cozzyz_gcal_token_" + PROFILE;
-  var GCAL_EVER_CONNECTED_KEY = "cozzyz_gcal_ever_connected_" + PROFILE;
 
   var gcalTokenClient = null;
   var gcalAccessToken = null;
@@ -630,6 +672,9 @@
   document.getElementById("gateInput").addEventListener("keydown", function (e) {
     if (e.key === "Enter") tryUnlock();
   });
+  document.getElementById("gateInputConfirm").addEventListener("keydown", function (e) {
+    if (e.key === "Enter") tryUnlock();
+  });
 
   function enterApp() {
     document.getElementById("gate").style.display = "none";
@@ -660,9 +705,32 @@
     });
   }
 
-  function initGate() {
-    ensureAuth().then(function () {
-      if (PROFILE === "zaza") {
+  function setProfile(name) {
+    PROFILE = name;
+    SESSION_KEY = "cozzyz_unlocked_" + PROFILE;
+    viewingOwner = PROFILE;
+    GCAL_TOKEN_KEY = "cozzyz_gcal_token_" + PROFILE;
+    GCAL_EVER_CONNECTED_KEY = "cozzyz_gcal_ever_connected_" + PROFILE;
+    try { localStorage.setItem("cozzyz_profile", PROFILE); } catch (e) {}
+  }
+
+  function chooseProfile(name) {
+    setProfile(name);
+
+    document.getElementById("profilePicker").style.display = "none";
+    document.getElementById("welcomeMsg").style.display = "none";
+
+    if (sessionStorage.getItem(SESSION_KEY) === "1") {
+      enterApp();
+      return;
+    }
+
+    document.getElementById("passcodeSection").style.display = "flex";
+    document.getElementById("gateInput").focus();
+
+    if (PROFILE === "zaza") {
+      document.getElementById("gateSubtitle").textContent = "Loading...";
+      ensureAuth().then(function () {
         supabase.from("cozzyz_profiles").select("*").eq("name", "zaza").then(function (res) {
           var row = res.data && res.data[0];
           zazaProfileCache = row || { name: "zaza", passcode: null };
@@ -674,11 +742,22 @@
             document.getElementById("gateSubtitle").textContent = "Enter your passcode to continue";
           }
         });
-      }
-    });
+      });
+    } else {
+      document.getElementById("gateSubtitle").textContent = "Enter your passcode to continue";
+    }
+  }
 
-    if (sessionStorage.getItem(SESSION_KEY) === "1") {
-      enterApp();
+  document.getElementById("profileTabKael").addEventListener("click", function () { chooseProfile("kael"); });
+  document.getElementById("profileTabZaza").addEventListener("click", function () { chooseProfile("zaza"); });
+
+  function initGate() {
+    renderWelcomeMessage();
+
+    var params = new URLSearchParams(window.location.search);
+    var fromUrl = params.get("user");
+    if (fromUrl === "zaza" || fromUrl === "kael") {
+      chooseProfile(fromUrl);
     }
   }
   initGate();
