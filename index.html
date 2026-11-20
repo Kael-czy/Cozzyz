@@ -178,6 +178,16 @@
     font-size: 0.9rem;
   }
   .empty-state { color: var(--muted); text-align: center; padding: 40px 0; }
+  .agenda-section-header {
+    color: var(--muted);
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin: 18px 0 8px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--border);
+  }
+  .agenda-section-header:first-child { margin-top: 0; }
   .fab {
     position: fixed;
     bottom: 24px;
@@ -746,32 +756,63 @@
     }).concat(gcalEvents);
   }
 
+  function startOfDay(d) {
+    var x = new Date(d);
+    x.setHours(0, 0, 0, 0);
+    return x;
+  }
+
+  function sortByEscalatedThenTime(a, b) {
+    var ae = a.escalated ? 1 : 0, be = b.escalated ? 1 : 0;
+    if (ae !== be) return be - ae; // escalated (previously-missed) goals jump to the front
+    return new Date(a.due_at) - new Date(b.due_at);
+  }
+
   function renderAgenda() {
     var list = document.getElementById("agendaList");
     list.innerHTML = "";
-    var now = new Date();
     var items = allItems();
 
-    var upcoming = items
-      .filter(function (t) { return !t.done && new Date(t.due_at) >= new Date(now.getTime() - 60 * 1000); })
-      .sort(function (a, b) {
-        var ae = a.escalated ? 1 : 0, be = b.escalated ? 1 : 0;
-        if (ae !== be) return be - ae; // escalated (previously-missed) goals jump to the front
-        return new Date(a.due_at) - new Date(b.due_at);
-      });
+    var today0 = startOfDay(new Date());
+    var tomorrow0 = new Date(today0); tomorrow0.setDate(tomorrow0.getDate() + 1);
+    var dayAfter0 = new Date(today0); dayAfter0.setDate(dayAfter0.getDate() + 2);
 
-    var past = items
-      .filter(function (t) { return t.done || new Date(t.due_at) < new Date(now.getTime() - 60 * 1000); })
-      .sort(function (a, b) { return new Date(b.due_at) - new Date(a.due_at); });
+    // escalated (missed-and-rescheduled) goals always surface, no matter which day they landed on
+    var escalatedItems = items.filter(function (t) { return t.escalated && !t.done; }).sort(sortByEscalatedThenTime);
+    var escalatedIds = {};
+    escalatedItems.forEach(function (t) { escalatedIds[t.id] = true; });
 
-    if (upcoming.length === 0 && past.length === 0) {
-      list.innerHTML = '<div class="empty-state">Nothing scheduled yet. Tap + to add a task.</div>';
+    var todayItems = items
+      .filter(function (t) {
+        var d = new Date(t.due_at);
+        return d >= today0 && d < tomorrow0 && !escalatedIds[t.id];
+      })
+      .sort(sortByEscalatedThenTime);
+
+    var tomorrowItems = items
+      .filter(function (t) {
+        var d = new Date(t.due_at);
+        return d >= tomorrow0 && d < dayAfter0 && !escalatedIds[t.id];
+      })
+      .sort(sortByEscalatedThenTime);
+
+    if (escalatedItems.length === 0 && todayItems.length === 0 && tomorrowItems.length === 0) {
+      list.innerHTML = '<div class="empty-state">Nothing scheduled for today or tomorrow. Tap + to add a task.</div>';
       return;
     }
 
-    upcoming.concat(past).forEach(function (t) {
-      list.appendChild(renderAgendaItem(t));
-    });
+    function addSection(label, arr) {
+      if (arr.length === 0) return;
+      var header = document.createElement("div");
+      header.className = "agenda-section-header";
+      header.textContent = label;
+      list.appendChild(header);
+      arr.forEach(function (t) { list.appendChild(renderAgendaItem(t)); });
+    }
+
+    addSection("⚡ Needs attention", escalatedItems);
+    addSection("Today", todayItems);
+    addSection("Tomorrow", tomorrowItems);
   }
 
   function renderAgendaItem(t) {
