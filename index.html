@@ -346,6 +346,8 @@
     border-radius: 8px;
     font-size: 0.95rem;
   }
+  .field-row { display: flex; gap: 10px; }
+  .field-row .field { flex: 1; margin-bottom: 12px; }
   .modal-actions { display: flex; gap: 8px; margin-top: 16px; }
   .modal-actions button { flex: 1; padding: 10px; border-radius: 8px; border: none; cursor: pointer; font-size: 0.95rem; }
   .btn-primary { background: #4f66f0; color: white; }
@@ -468,12 +470,18 @@
       <input type="text" id="taskTitleInput" placeholder="e.g. Submit assignment" />
     </div>
     <div class="field">
-      <label>Date &amp; time</label>
-      <input type="datetime-local" id="taskDueInput" />
+      <label>Date</label>
+      <input type="date" id="taskDateInput" />
     </div>
-    <div class="field">
-      <label>Duration (minutes)</label>
-      <input type="number" id="taskDurationInput" min="5" step="5" value="60" />
+    <div class="field-row">
+      <div class="field">
+        <label>Start time</label>
+        <input type="time" id="taskStartTimeInput" />
+      </div>
+      <div class="field">
+        <label>End time</label>
+        <input type="time" id="taskEndTimeInput" />
+      </div>
     </div>
     <div class="field">
       <label>Category</label>
@@ -1245,18 +1253,34 @@
     document.getElementById("taskGoalIntervalInput").value = (task && task.goal_reset_interval) ? task.goal_reset_interval : "day";
     document.getElementById("goalIntervalField").style.display = (task && task.is_goal) ? "block" : "none";
 
-    var dueVal = "";
+    function localDateParts(d) {
+      var local = new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+      var parts = local.split("T");
+      return { date: parts[0], time: parts[1] };
+    }
+
+    var dueDate, startTime, endTime;
     if (task) {
       var d = new Date(task.due_at);
-      dueVal = new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+      var parts = localDateParts(d);
+      dueDate = parts.date;
+      startTime = parts.time;
+      var mins = task.duration_minutes || 60;
+      var endD = new Date(d.getTime() + mins * 60000);
+      endTime = localDateParts(endD).time;
     } else {
       var now = new Date();
       now.setMinutes(0, 0, 0);
       now.setHours(now.getHours() + 1);
-      dueVal = new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+      var nowParts = localDateParts(now);
+      dueDate = nowParts.date;
+      startTime = nowParts.time;
+      var defaultEnd = new Date(now.getTime() + 60 * 60000);
+      endTime = localDateParts(defaultEnd).time;
     }
-    document.getElementById("taskDueInput").value = dueVal;
-    document.getElementById("taskDurationInput").value = task && task.duration_minutes ? task.duration_minutes : 60;
+    document.getElementById("taskDateInput").value = dueDate;
+    document.getElementById("taskStartTimeInput").value = startTime;
+    document.getElementById("taskEndTimeInput").value = endTime;
 
     var existingErr = document.getElementById("modalErrorMsg");
     if (existingErr) existingErr.textContent = "";
@@ -1273,8 +1297,16 @@
     document.getElementById("taskIsGoalInput").checked = false;
     document.getElementById("taskGoalIntervalInput").value = "day";
     document.getElementById("goalIntervalField").style.display = "none";
-    document.getElementById("taskDueInput").value = fields.dueLocal;
-    document.getElementById("taskDurationInput").value = fields.durationMinutes || 60;
+
+    var dueParts = (fields.dueLocal || "").split("T");
+    var startD = new Date(fields.dueLocal);
+    var durationMinutes = fields.durationMinutes || 60;
+    var endD = new Date(startD.getTime() + durationMinutes * 60000);
+    var endLocal = new Date(endD.getTime() - endD.getTimezoneOffset() * 60000).toISOString().slice(0, 16).split("T");
+
+    document.getElementById("taskDateInput").value = dueParts[0] || "";
+    document.getElementById("taskStartTimeInput").value = dueParts[1] || "";
+    document.getElementById("taskEndTimeInput").value = endLocal[1] || "";
 
     var existingErr = document.getElementById("modalErrorMsg");
     if (existingErr) existingErr.textContent = "";
@@ -1295,18 +1327,25 @@
   document.getElementById("modalSave").addEventListener("click", function () {
     var id = document.getElementById("taskId").value;
     var title = document.getElementById("taskTitleInput").value.trim();
-    var dueRaw = document.getElementById("taskDueInput").value;
+    var dateRaw = document.getElementById("taskDateInput").value;
+    var startRaw = document.getElementById("taskStartTimeInput").value;
+    var endRaw = document.getElementById("taskEndTimeInput").value;
     var category = document.getElementById("taskCategoryInput").value;
     var isGoal = document.getElementById("taskIsGoalInput").checked;
     var goalInterval = document.getElementById("taskGoalIntervalInput").value;
-    var durationMinutes = parseInt(document.getElementById("taskDurationInput").value, 10) || 60;
 
-    if (!title || !dueRaw) {
-      alertInline("Please fill in title and date/time.");
+    if (!title || !dateRaw || !startRaw || !endRaw) {
+      alertInline("Please fill in title, date, start time, and end time.");
       return;
     }
 
+    var dueRaw = dateRaw + "T" + startRaw;
     var dueIso = new Date(dueRaw).toISOString();
+
+    var startMins = parseInt(startRaw.split(":")[0], 10) * 60 + parseInt(startRaw.split(":")[1], 10);
+    var endMins = parseInt(endRaw.split(":")[0], 10) * 60 + parseInt(endRaw.split(":")[1], 10);
+    var durationMinutes = endMins - startMins;
+    if (durationMinutes <= 0) durationMinutes += 24 * 60;
 
     if (id) {
       var existing = tasks.filter(function (t) { return String(t.id) === String(id); })[0];
