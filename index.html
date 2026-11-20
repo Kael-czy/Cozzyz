@@ -1129,7 +1129,8 @@
   var todos = [];
 
   function loadTodos() {
-    // Shared list: both Kael and Zaza see and can edit every item, regardless of who added it.
+    // Each person has their own to-do list, but both can see both lists.
+    // Editing (check off / delete) is only allowed on your own list, enforced client-side below.
     return supabase.from("cozzyz_todos").select("*").order("created_at", { ascending: true }).then(function (res) {
       if (res.error) {
         console.error("Load todos error:", res.error.message);
@@ -1144,17 +1145,46 @@
   function renderTodoList() {
     var list = document.getElementById("todoList");
     list.innerHTML = "";
-    if (todos.length === 0) {
-      list.innerHTML = '<div class="empty-state">Nothing on your to-do list.</div>';
-      return;
-    }
-    todos.forEach(function (t) {
-      var row = document.createElement("div");
-      row.className = "todo-item";
 
-      var cb = document.createElement("input");
-      cb.type = "checkbox";
-      cb.checked = !!t.done;
+    var mine = todos.filter(function (t) { return t.owner === PROFILE; });
+    var theirs = todos.filter(function (t) { return t.owner !== PROFILE; });
+
+    var mineHeader = document.createElement("div");
+    mineHeader.className = "agenda-section-header";
+    mineHeader.textContent = "Your to-do";
+    list.appendChild(mineHeader);
+    if (mine.length === 0) {
+      var emptyMine = document.createElement("div");
+      emptyMine.className = "empty-state";
+      emptyMine.textContent = "Nothing on your to-do list.";
+      list.appendChild(emptyMine);
+    } else {
+      mine.forEach(function (t) { list.appendChild(renderTodoItem(t, true)); });
+    }
+
+    var theirsHeader = document.createElement("div");
+    theirsHeader.className = "agenda-section-header";
+    theirsHeader.textContent = displayName(otherOwner(PROFILE)) + "'s to-do";
+    list.appendChild(theirsHeader);
+    if (theirs.length === 0) {
+      var emptyTheirs = document.createElement("div");
+      emptyTheirs.className = "empty-state";
+      emptyTheirs.textContent = "Nothing here yet.";
+      list.appendChild(emptyTheirs);
+    } else {
+      theirs.forEach(function (t) { list.appendChild(renderTodoItem(t, false)); });
+    }
+  }
+
+  function renderTodoItem(t, editable) {
+    var row = document.createElement("div");
+    row.className = "todo-item";
+
+    var cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.checked = !!t.done;
+    cb.disabled = !editable;
+    if (editable) {
       cb.addEventListener("change", function () {
         supabase.from("cozzyz_todos").update({ done: cb.checked }).eq("id", t.id).then(function (res) {
           if (res.error) { console.error(res.error.message); return; }
@@ -1162,11 +1192,16 @@
           renderTodoList();
         });
       });
+    }
 
-      var text = document.createElement("div");
-      text.className = "todo-text" + (t.done ? " done" : "");
-      text.textContent = t.text;
+    var text = document.createElement("div");
+    text.className = "todo-text" + (t.done ? " done" : "");
+    text.textContent = t.text;
 
+    row.appendChild(cb);
+    row.appendChild(text);
+
+    if (editable) {
       var delBtn = document.createElement("button");
       delBtn.className = "icon-btn";
       delBtn.textContent = "✕";
@@ -1177,12 +1212,10 @@
           loadTodos();
         });
       });
-
-      row.appendChild(cb);
-      row.appendChild(text);
       row.appendChild(delBtn);
-      list.appendChild(row);
-    });
+    }
+
+    return row;
   }
 
   function addTodo() {
