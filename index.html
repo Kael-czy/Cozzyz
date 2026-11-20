@@ -1129,7 +1129,8 @@
   var todos = [];
 
   function loadTodos() {
-    return supabase.from("cozzyz_todos").select("*").eq("owner", PROFILE).order("created_at", { ascending: true }).then(function (res) {
+    // Shared list: both Kael and Zaza see and can edit every item, regardless of who added it.
+    return supabase.from("cozzyz_todos").select("*").order("created_at", { ascending: true }).then(function (res) {
       if (res.error) {
         console.error("Load todos error:", res.error.message);
         todos = [];
