@@ -100,6 +100,27 @@
     cursor: default;
   }
   #gcalStatus { font-size: 0.72rem; color: var(--muted); width: 100%; text-align: right; }
+  .quickadd { display: flex; gap: 8px; margin-bottom: 16px; }
+  .quickadd input {
+    flex: 1;
+    background: var(--card2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 10px 12px;
+    border-radius: 10px;
+    font-size: 0.92rem;
+  }
+  .quickadd button {
+    background: #4f66f0;
+    color: white;
+    border: none;
+    padding: 10px 16px;
+    border-radius: 10px;
+    cursor: pointer;
+    font-size: 0.92rem;
+    flex-shrink: 0;
+  }
+  .quickadd-hint { color: var(--muted); font-size: 0.75rem; margin: -10px 0 16px; }
   .view { display: none; }
   .view.active { display: block; }
   .agenda-item {
@@ -279,6 +300,12 @@
     <button id="tabCalendarBtn">Calendar</button>
   </div>
 
+  <div class="quickadd">
+    <input type="text" id="quickAddInput" placeholder='e.g. &quot;Book my time Saturday 10pm to 12am for movie night&quot;' autocomplete="off" />
+    <button id="quickAddBtn">Add</button>
+  </div>
+  <div class="quickadd-hint" id="quickAddHint"></div>
+
   <div id="agendaView" class="view active">
     <div id="agendaList"></div>
   </div>
@@ -310,6 +337,10 @@
     <div class="field">
       <label>Date &amp; time</label>
       <input type="datetime-local" id="taskDueInput" />
+    </div>
+    <div class="field">
+      <label>Duration (minutes)</label>
+      <input type="number" id="taskDurationInput" min="5" step="5" value="60" />
     </div>
     <div class="field">
       <label>Category</label>
@@ -658,7 +689,8 @@
   function pushTaskCreate(task) {
     if (!isGcalConnected()) return Promise.resolve(null);
     var start = new Date(task.due_at);
-    var end = new Date(start.getTime() + 60 * 60 * 1000);
+    var mins = task.duration_minutes || 60;
+    var end = new Date(start.getTime() + mins * 60 * 1000);
     var body = {
       summary: gcalSummaryFor(task),
       start: { dateTime: start.toISOString() },
@@ -672,7 +704,8 @@
   function pushTaskUpdate(task) {
     if (!isGcalConnected() || !task.gcal_event_id) return Promise.resolve(null);
     var start = new Date(task.due_at);
-    var end = new Date(start.getTime() + 60 * 60 * 1000);
+    var mins = task.duration_minutes || 60;
+    var end = new Date(start.getTime() + mins * 60 * 1000);
     var body = {
       summary: gcalSummaryFor(task),
       start: { dateTime: start.toISOString() },
@@ -940,6 +973,25 @@
       dueVal = new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
     }
     document.getElementById("taskDueInput").value = dueVal;
+    document.getElementById("taskDurationInput").value = task && task.duration_minutes ? task.duration_minutes : 60;
+
+    var existingErr = document.getElementById("modalErrorMsg");
+    if (existingErr) existingErr.textContent = "";
+
+    modalOverlay.classList.add("open");
+  }
+
+  function openModalPrefilled(fields) {
+    document.getElementById("modalDelete").style.display = "none";
+    document.getElementById("modalTitle").textContent = "Add Task";
+    document.getElementById("taskId").value = "";
+    document.getElementById("taskTitleInput").value = fields.title || "";
+    document.getElementById("taskCategoryInput").value = fields.category || "other";
+    document.getElementById("taskIsGoalInput").checked = false;
+    document.getElementById("taskGoalIntervalInput").value = "day";
+    document.getElementById("goalIntervalField").style.display = "none";
+    document.getElementById("taskDueInput").value = fields.dueLocal;
+    document.getElementById("taskDurationInput").value = fields.durationMinutes || 60;
 
     var existingErr = document.getElementById("modalErrorMsg");
     if (existingErr) existingErr.textContent = "";
@@ -964,6 +1016,7 @@
     var category = document.getElementById("taskCategoryInput").value;
     var isGoal = document.getElementById("taskIsGoalInput").checked;
     var goalInterval = document.getElementById("taskGoalIntervalInput").value;
+    var durationMinutes = parseInt(document.getElementById("taskDurationInput").value, 10) || 60;
 
     if (!title || !dueRaw) {
       alertInline("Please fill in title and date/time.");
@@ -979,7 +1032,8 @@
         due_at: dueIso,
         category: category,
         is_goal: isGoal,
-        goal_reset_interval: isGoal ? goalInterval : null
+        goal_reset_interval: isGoal ? goalInterval : null,
+        duration_minutes: durationMinutes
       };
       if (existing && existing.escalated && !isGoal) patch.escalated = false;
       updateTask(id, patch).then(function (res) {
@@ -991,6 +1045,7 @@
           existing.category = category;
           existing.is_goal = isGoal;
           existing.goal_reset_interval = isGoal ? goalInterval : null;
+          existing.duration_minutes = durationMinutes;
           pushTaskUpdate(existing);
         }
         loadTasks();
@@ -1003,7 +1058,8 @@
         done: false,
         is_goal: isGoal,
         goal_reset_interval: isGoal ? goalInterval : null,
-        escalated: false
+        escalated: false,
+        duration_minutes: durationMinutes
       }).then(function (res) {
         if (res.error) { alertInline(res.error.message); return; }
         closeModal();
@@ -1042,6 +1098,148 @@
         loadTasks();
       }
     });
+  });
+
+  // ===================== Quick add (natural language) =====================
+
+  var WEEKDAYS = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
+  var MONTHS = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"];
+
+  function parseNaturalLanguage(text) {
+    var original = text;
+    var lower = text.toLowerCase();
+    var result = { title: null, startDate: null, startTime: null, endTime: null, category: "other" };
+
+    var base = new Date();
+    base.setHours(0, 0, 0, 0);
+
+    var dateMatch = null;
+    var mToday = /\btoday\b/.exec(lower);
+    var mTom = /\btomorrow\b/.exec(lower);
+    var mNextWeekday = new RegExp("\\bnext\\s+(" + WEEKDAYS.join("|") + ")\\b").exec(lower);
+    var mExplicit = new RegExp("\\b(" + MONTHS.join("|") + ")\\s+(\\d{1,2})(st|nd|rd|th)?\\b").exec(lower);
+    var mSlash = /\b(\d{1,2})[\/\-](\d{1,2})(?:[\/\-](\d{2,4}))?\b/.exec(lower);
+    var mWeekday = new RegExp("\\b(" + WEEKDAYS.join("|") + ")\\b").exec(lower);
+
+    if (mToday) {
+      result.startDate = new Date(base);
+      dateMatch = mToday;
+    } else if (mTom) {
+      var dTom = new Date(base); dTom.setDate(dTom.getDate() + 1);
+      result.startDate = dTom;
+      dateMatch = mTom;
+    } else if (mExplicit) {
+      var mi = MONTHS.indexOf(mExplicit[1]);
+      var day = parseInt(mExplicit[2], 10);
+      var dExp = new Date(base.getFullYear(), mi, day);
+      if (dExp < base) dExp.setFullYear(dExp.getFullYear() + 1);
+      result.startDate = dExp;
+      dateMatch = mExplicit;
+    } else if (mSlash) {
+      var mm = parseInt(mSlash[1], 10) - 1, dd = parseInt(mSlash[2], 10);
+      var yy = mSlash[3] ? (mSlash[3].length === 2 ? 2000 + parseInt(mSlash[3], 10) : parseInt(mSlash[3], 10)) : base.getFullYear();
+      result.startDate = new Date(yy, mm, dd);
+      dateMatch = mSlash;
+    } else if (mNextWeekday) {
+      var targetDow = WEEKDAYS.indexOf(mNextWeekday[1]);
+      var dNext = new Date(base);
+      var diffNext = (targetDow - dNext.getDay() + 7) % 7;
+      diffNext += 7; // "next <weekday>" skips the one occurring this week
+      dNext.setDate(dNext.getDate() + diffNext);
+      result.startDate = dNext;
+      dateMatch = mNextWeekday;
+    } else if (mWeekday) {
+      var targetDow2 = WEEKDAYS.indexOf(mWeekday[1]);
+      var dWd = new Date(base);
+      var diffWd = (targetDow2 - dWd.getDay() + 7) % 7;
+      if (diffWd === 0) diffWd = 7; // the upcoming one, not today, unless "today" was said
+      dWd.setDate(dWd.getDate() + diffWd);
+      result.startDate = dWd;
+      dateMatch = mWeekday;
+    } else {
+      result.startDate = new Date(base);
+    }
+
+    function to24(hStr, mStr, ap) {
+      var h = parseInt(hStr, 10);
+      var m = mStr ? parseInt(mStr.slice(1), 10) : 0;
+      if (ap === "pm" && h < 12) h += 12;
+      if (ap === "am" && h === 12) h = 0;
+      return { h: h, m: m };
+    }
+
+    var timeRangeRe = /\b(\d{1,2})(:\d{2})?\s*(am|pm)?\s*(?:to|-|–|until|till)\s*(\d{1,2})(:\d{2})?\s*(am|pm)?\b/;
+    var singleTimeRe = /\b(?:at\s+)?(\d{1,2})(:\d{2})?\s*(am|pm)\b/;
+    var tMatch = timeRangeRe.exec(lower);
+    var sMatch = null;
+
+    if (tMatch) {
+      var ap1 = tMatch[3], ap2 = tMatch[6];
+      if (!ap1 && ap2) ap1 = ap2;
+      if (!ap2 && ap1) ap2 = ap1;
+      result.startTime = to24(tMatch[1], tMatch[2], ap1);
+      result.endTime = to24(tMatch[4], tMatch[5], ap2);
+    } else if ((sMatch = singleTimeRe.exec(lower))) {
+      result.startTime = to24(sMatch[1], sMatch[2], sMatch[3]);
+    }
+
+    if (/\b(school|class|assignment|exam|homework|study|lecture)\b/.test(lower)) result.category = "school";
+    else if (/\b(movie|game|party|fun|concert|show|entertainment)\b/.test(lower)) result.category = "entertainment";
+
+    var cleaned = original;
+    cleaned = cleaned.replace(/\b(please\s+)?book\s+(my\s+)?time\b/i, "");
+    cleaned = cleaned.replace(/\bschedule\b/i, "");
+    cleaned = cleaned.replace(/\bremind me to\b/i, "");
+    if (dateMatch) cleaned = cleaned.replace(new RegExp(dateMatch[0].replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i"), "");
+    if (tMatch) cleaned = cleaned.replace(tMatch[0], "");
+    else if (sMatch) cleaned = cleaned.replace(sMatch[0], "");
+    cleaned = cleaned.replace(/\bon\b/gi, "").replace(/\bat\b/gi, "").replace(/\bfor\b/gi, "").replace(/\bnext\b/gi, "");
+    cleaned = cleaned.replace(/\s{2,}/g, " ").replace(/^[\s,.-]+|[\s,.-]+$/g, "").trim();
+    if (!cleaned) cleaned = "Untitled event";
+    result.title = cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
+
+    return result;
+  }
+
+  function runQuickAdd() {
+    var input = document.getElementById("quickAddInput");
+    var hint = document.getElementById("quickAddHint");
+    var text = input.value.trim();
+    if (!text) return;
+
+    var parsed = parseNaturalLanguage(text);
+    var due = new Date(parsed.startDate);
+    if (parsed.startTime) {
+      due.setHours(parsed.startTime.h, parsed.startTime.m, 0, 0);
+    } else {
+      due.setHours(9, 0, 0, 0);
+    }
+
+    var durationMinutes = 60;
+    if (parsed.startTime && parsed.endTime) {
+      var startMins = parsed.startTime.h * 60 + parsed.startTime.m;
+      var endMins = parsed.endTime.h * 60 + parsed.endTime.m;
+      var diff = endMins - startMins;
+      if (diff <= 0) diff += 24 * 60; // range crosses midnight
+      durationMinutes = diff;
+    }
+
+    var dueLocal = new Date(due.getTime() - due.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+
+    openModalPrefilled({
+      title: parsed.title,
+      category: parsed.category,
+      dueLocal: dueLocal,
+      durationMinutes: durationMinutes
+    });
+
+    hint.textContent = "Double-check the details below, then Save.";
+    input.value = "";
+  }
+
+  document.getElementById("quickAddBtn").addEventListener("click", runQuickAdd);
+  document.getElementById("quickAddInput").addEventListener("keydown", function (e) {
+    if (e.key === "Enter") runQuickAdd();
   });
 
   function alertInline(msg) {
