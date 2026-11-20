@@ -121,6 +121,31 @@
     flex-shrink: 0;
   }
   .quickadd-hint { color: var(--muted); font-size: 0.75rem; margin: -10px 0 16px; }
+  .viewing-banner {
+    text-align: center;
+    color: var(--muted);
+    font-size: 0.8rem;
+    margin-bottom: 10px;
+    padding: 8px;
+    background: var(--card2);
+    border-radius: 8px;
+  }
+  .view-toggle-btn {
+    display: block;
+    width: 100%;
+    margin-top: 14px;
+    background: var(--card2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 12px;
+    border-radius: 10px;
+    cursor: pointer;
+    font-size: 0.92rem;
+  }
+  .view-toggle-btn.viewing-other {
+    border-color: #4f66f0;
+    color: #4f66f0;
+  }
   .view { display: none; }
   .view.active { display: block; }
   .agenda-item {
@@ -292,8 +317,9 @@
 
 <div id="gate">
   <h1>Cozzyz</h1>
-  <p style="color:var(--muted); margin-top:-8px;">Enter passcode to continue</p>
+  <p id="gateSubtitle" style="color:var(--muted); margin-top:-8px;">Enter passcode to continue</p>
   <input type="password" id="gateInput" placeholder="Passcode" autocomplete="off" />
+  <input type="password" id="gateInputConfirm" placeholder="Confirm passcode" autocomplete="off" style="display:none;" />
   <button id="gateBtn">Unlock</button>
   <div id="gateError"></div>
 </div>
@@ -316,6 +342,8 @@
   </div>
   <div class="quickadd-hint" id="quickAddHint"></div>
 
+  <div class="viewing-banner" id="viewingBanner" style="display:none;"></div>
+
   <div id="agendaView" class="view active">
     <div id="agendaList"></div>
   </div>
@@ -330,6 +358,8 @@
     <div class="cal-grid" id="calGrid"></div>
     <div id="dayDetail" class="day-detail" style="display:none;"></div>
   </div>
+
+  <button id="viewToggleBtn" class="view-toggle-btn"></button>
 
   <footer class="app-footer">Cozzyz &middot; data stored in Supabase &middot; syncs with Google Calendar</footer>
 </div>
@@ -402,13 +432,35 @@
   var SUPABASE_KEY = "sb_publishable_gYGE2QVBELzeiP1KqB1_cA_WEDtVgmw";
   var TABLE = "cozzyz_tasks";
   var PASSCODE = "cozzyz2026";
-  var SESSION_KEY = "cozzyz_unlocked";
+
+  // --- Multi-user profiles ---
+  function resolveProfile() {
+    var params = new URLSearchParams(window.location.search);
+    var fromUrl = params.get("user");
+    if (fromUrl === "zaza" || fromUrl === "kael") {
+      try { localStorage.setItem("cozzyz_profile", fromUrl); } catch (e) {}
+      return fromUrl;
+    }
+    try {
+      var stored = localStorage.getItem("cozzyz_profile");
+      if (stored === "zaza" || stored === "kael") return stored;
+    } catch (e) {}
+    return "kael";
+  }
+
+  var PROFILE = resolveProfile();
+  var SESSION_KEY = "cozzyz_unlocked_" + PROFILE;
+  var viewingOwner = PROFILE;
+  var zazaProfileCache = null;
+
+  function otherOwner(o) { return o === "kael" ? "zaza" : "kael"; }
+  function displayName(o) { return o === "kael" ? "Cozzyz" : "Zaza"; }
 
   // --- Google Calendar sync config ---
   var GCAL_CLIENT_ID = "483435323151-0n5tdi81e6gr7nlrtokva1o47ki6smem.apps.googleusercontent.com";
   var GCAL_SCOPE = "https://www.googleapis.com/auth/calendar.events";
-  var GCAL_TOKEN_KEY = "cozzyz_gcal_token";
-  var GCAL_EVER_CONNECTED_KEY = "cozzyz_gcal_ever_connected";
+  var GCAL_TOKEN_KEY = "cozzyz_gcal_token_" + PROFILE;
+  var GCAL_EVER_CONNECTED_KEY = "cozzyz_gcal_ever_connected_" + PROFILE;
 
   var gcalTokenClient = null;
   var gcalAccessToken = null;
@@ -426,6 +478,43 @@
 
   function tryUnlock() {
     var val = document.getElementById("gateInput").value;
+
+    if (PROFILE === "zaza") {
+      if (!zazaProfileCache) {
+        document.getElementById("gateError").textContent = "Still loading, try again in a second.";
+        return;
+      }
+      if (!zazaProfileCache.passcode) {
+        var confirmVal = document.getElementById("gateInputConfirm").value;
+        if (!val || val.length < 4) {
+          document.getElementById("gateError").textContent = "Passcode must be at least 4 characters.";
+          return;
+        }
+        if (val !== confirmVal) {
+          document.getElementById("gateError").textContent = "Passcodes don't match.";
+          return;
+        }
+        supabase.from("cozzyz_profiles").update({ passcode: val }).eq("name", "zaza").then(function (res) {
+          if (res.error) {
+            document.getElementById("gateError").textContent = res.error.message;
+            return;
+          }
+          zazaProfileCache.passcode = val;
+          sessionStorage.setItem(SESSION_KEY, "1");
+          enterApp();
+        });
+        return;
+      }
+      if (val === zazaProfileCache.passcode) {
+        sessionStorage.setItem(SESSION_KEY, "1");
+        enterApp();
+      } else {
+        document.getElementById("gateError").textContent = "Incorrect passcode.";
+      }
+      return;
+    }
+
+    // default profile: kael
     if (val === PASSCODE) {
       sessionStorage.setItem(SESSION_KEY, "1");
       enterApp();
@@ -446,15 +535,12 @@
     init();
   }
 
-  if (sessionStorage.getItem(SESSION_KEY) === "1") {
-    enterApp();
-  }
-
   function init() {
     ensureAuth().then(function () {
       loadTasks();
     });
     initGoogleCalendar();
+    updateViewToggleUI();
   }
 
   function ensureAuth() {
@@ -469,10 +555,33 @@
     });
   }
 
+  function initGate() {
+    ensureAuth().then(function () {
+      if (PROFILE === "zaza") {
+        supabase.from("cozzyz_profiles").select("*").eq("name", "zaza").then(function (res) {
+          var row = res.data && res.data[0];
+          zazaProfileCache = row || { name: "zaza", passcode: null };
+          if (!zazaProfileCache.passcode) {
+            document.getElementById("gateSubtitle").textContent = "Welcome, Zaza! Set a passcode to continue.";
+            document.getElementById("gateInput").placeholder = "New passcode";
+            document.getElementById("gateInputConfirm").style.display = "block";
+          } else {
+            document.getElementById("gateSubtitle").textContent = "Enter your passcode to continue";
+          }
+        });
+      }
+    });
+
+    if (sessionStorage.getItem(SESSION_KEY) === "1") {
+      enterApp();
+    }
+  }
+  initGate();
+
   var goalCheckRan = false;
 
   function loadTasks() {
-    supabase.from(TABLE).select("*").order("due_at", { ascending: true }).then(function (res) {
+    supabase.from(TABLE).select("*").eq("owner", viewingOwner).order("due_at", { ascending: true }).then(function (res) {
       if (res.error) {
         console.error("Load error:", res.error.message);
         tasks = [];
@@ -744,6 +853,40 @@
     document.getElementById("calendarView").classList.toggle("active", v === "calendar");
   }
 
+  // ===================== Shared viewing (Kael <-> Zaza) =====================
+
+  function updateViewToggleUI() {
+    var btn = document.getElementById("viewToggleBtn");
+    var isOwn = viewingOwner === PROFILE;
+
+    btn.textContent = isOwn
+      ? ("View " + displayName(otherOwner(PROFILE)) + "'s activities")
+      : ("Back to your activities");
+    btn.classList.toggle("viewing-other", !isOwn);
+
+    document.getElementById("addFab").style.display = isOwn ? "block" : "none";
+    var qa = document.querySelector(".quickadd");
+    if (qa) qa.style.display = isOwn ? "flex" : "none";
+    document.getElementById("quickAddHint").style.display = isOwn ? "block" : "none";
+
+    var banner = document.getElementById("viewingBanner");
+    if (!isOwn) {
+      banner.style.display = "block";
+      banner.textContent = "Viewing " + displayName(viewingOwner) + "'s activities (read-only)";
+    } else {
+      banner.style.display = "none";
+    }
+  }
+
+  document.getElementById("viewToggleBtn").addEventListener("click", function () {
+    viewingOwner = viewingOwner === PROFILE ? otherOwner(PROFILE) : PROFILE;
+    updateViewToggleUI();
+    if (viewingOwner !== PROFILE) {
+      gcalEvents = []; // don't overlay your own Google Calendar while viewing someone else's tasks
+    }
+    loadTasks();
+  });
+
   function fmtDateTime(d) {
     var opts = { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" };
     return d.toLocaleString(undefined, opts);
@@ -859,7 +1002,7 @@
     var actions = document.createElement("div");
     actions.className = "agenda-actions";
 
-    if (!isGoogle) {
+    if (!isGoogle && viewingOwner === PROFILE) {
       var doneBtn = document.createElement("button");
       doneBtn.className = "icon-btn";
       doneBtn.textContent = t.done ? "↺" : "✓";
@@ -1100,7 +1243,8 @@
         is_goal: isGoal,
         goal_reset_interval: isGoal ? goalInterval : null,
         escalated: false,
-        duration_minutes: durationMinutes
+        duration_minutes: durationMinutes,
+        owner: PROFILE
       }).then(function (res) {
         if (res.error) { alertInline(res.error.message); return; }
         closeModal();
