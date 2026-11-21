@@ -119,6 +119,15 @@
     flex-wrap: wrap;
   }
   header h1 { font-size: 1.5rem; margin: 0; }
+  .points-badge {
+    background: linear-gradient(90deg, #f5c84c, #f59e0b);
+    color: #15171c;
+    font-size: 0.8rem;
+    font-weight: 600;
+    padding: 5px 11px;
+    border-radius: 999px;
+    white-space: nowrap;
+  }
   .tabs {
     display: flex;
     gap: 8px;
@@ -475,6 +484,7 @@
 <div id="app">
   <header>
     <h1>Bazement <span id="adminBadge" style="display:none; font-size:0.6rem; vertical-align:middle; background:#4f66f0; color:white; padding:2px 7px; border-radius:6px; margin-left:6px;">ADMIN</span></h1>
+    <span id="pointsBadge" class="points-badge" title="25 points per completed goal, resets each month">🏆 0 pts this month</span>
     <button id="gcalBtn" title="Connect your Google Calendar">Connect Google Calendar</button>
     <div id="gcalStatus"></div>
   </header>
@@ -746,6 +756,7 @@
     ensureAuth().then(function () {
       loadTasks();
       loadProfileSettings();
+      loadPoints();
     });
     initGoogleCalendar();
     updateViewToggleUI();
@@ -875,6 +886,41 @@
     return supabase.from(TABLE).delete().eq("id", id);
   }
 
+  // ===================== Points: 25 pts per completed goal, tallied per calendar month =====================
+
+  var GOAL_POINTS = 25;
+
+  function awardGoalPoints(owner, taskId) {
+    return supabase.from("cozzyz_points").insert({ owner: owner, task_id: taskId, points: GOAL_POINTS }).then(function (res) {
+      if (res.error) console.error("Award points error:", res.error.message);
+      if (owner === PROFILE) loadPoints();
+    });
+  }
+
+  // Un-award the most recent points entry for this task/owner (used when a completed goal is un-checked).
+  function revokeGoalPoints(owner, taskId) {
+    return supabase.from("cozzyz_points").select("id").eq("owner", owner).eq("task_id", taskId)
+      .order("created_at", { ascending: false }).limit(1).then(function (res) {
+        if (res.error || !res.data || !res.data.length) return;
+        return supabase.from("cozzyz_points").delete().eq("id", res.data[0].id).then(function () {
+          if (owner === PROFILE) loadPoints();
+        });
+      });
+  }
+
+  function loadPoints() {
+    var now = new Date();
+    var startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+    return supabase.from("cozzyz_points").select("points").eq("owner", PROFILE).gte("created_at", startOfMonth).then(function (res) {
+      var total = 0;
+      if (!res.error && res.data) {
+        res.data.forEach(function (p) { total += p.points; });
+      }
+      var badge = document.getElementById("pointsBadge");
+      if (badge) badge.textContent = "🏆 " + total + " pts this month";
+    });
+  }
+
   // ===================== Goals: end-of-day check-in =====================
 
   function startOfToday() {
@@ -934,6 +980,7 @@
       if (completed) {
         updateTask(goal.id, { done: true, escalated: false }).then(function () {
           if (goal.gcal_event_id) pushTaskDelete(goal.gcal_event_id);
+          awardGoalPoints(goal.owner, goal.id);
           askGoalQueue(queue);
         });
       } else {
@@ -1390,9 +1437,16 @@
       doneBtn.textContent = t.done ? "↺" : "✓";
       doneBtn.title = t.done ? "Mark not done" : "Mark done";
       doneBtn.addEventListener("click", function () {
-        var patch = { done: !t.done };
-        if (!t.done && t.is_goal) patch.escalated = false;
-        updateTask(t.id, patch).then(loadTasks);
+        var nowDone = !t.done;
+        var patch = { done: nowDone };
+        if (nowDone && t.is_goal) patch.escalated = false;
+        updateTask(t.id, patch).then(function () {
+          if (t.is_goal) {
+            if (nowDone) awardGoalPoints(t.owner, t.id);
+            else revokeGoalPoints(t.owner, t.id);
+          }
+          loadTasks();
+        });
       });
 
       var editBtn = document.createElement("button");
