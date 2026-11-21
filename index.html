@@ -128,25 +128,57 @@
     border-radius: 999px;
     white-space: nowrap;
   }
-  .tabs {
-    display: flex;
-    gap: 8px;
+  .nav-dropdown {
+    position: relative;
     margin-bottom: 16px;
   }
-  .tabs button {
-    flex: 1;
+  .nav-dropdown-btn {
+    width: 100%;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
     background: var(--card);
     border: 1px solid var(--border);
     color: var(--text);
-    padding: 10px;
+    padding: 10px 14px;
     border-radius: 10px;
     cursor: pointer;
     font-size: 0.95rem;
   }
-  .tabs button.active {
-    background: #4f66f0;
-    border-color: #4f66f0;
+  .nav-caret {
+    font-size: 0.75rem;
+    color: var(--muted);
+    transition: transform 0.15s ease;
   }
+  .nav-dropdown.open .nav-caret { transform: rotate(180deg); }
+  .nav-dropdown-menu {
+    display: none;
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 0;
+    right: 0;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+    z-index: 30;
+  }
+  .nav-dropdown.open .nav-dropdown-menu { display: block; }
+  .nav-dropdown-menu button {
+    display: block;
+    width: 100%;
+    text-align: left;
+    background: transparent;
+    border: none;
+    border-bottom: 1px solid var(--border);
+    color: var(--text);
+    padding: 10px 14px;
+    cursor: pointer;
+    font-size: 0.95rem;
+  }
+  .nav-dropdown-menu button:last-child { border-bottom: none; }
+  .nav-dropdown-menu button.active { background: #4f66f0; }
+  .nav-dropdown-menu button:not(.active):hover { background: var(--card2); }
   #gcalBtn {
     background: var(--card2);
     border: 1px dashed var(--border);
@@ -484,15 +516,21 @@
 <div id="app">
   <header>
     <h1>Bazement <span id="adminBadge" style="display:none; font-size:0.6rem; vertical-align:middle; background:#4f66f0; color:white; padding:2px 7px; border-radius:6px; margin-left:6px;">ADMIN</span></h1>
-    <span id="pointsBadge" class="points-badge" title="25 points per completed goal, resets each month">🏆 0 pts this month</span>
+    <span id="pointsBadge" class="points-badge" title="25 points per completed goal · tallied each calendar month">🏆 Kael 0 · Zaza 0 (Tied)</span>
     <button id="gcalBtn" title="Connect your Google Calendar">Connect Google Calendar</button>
     <div id="gcalStatus"></div>
   </header>
 
-  <div class="tabs">
-    <button id="tabAgendaBtn" class="active">Agenda</button>
-    <button id="tabCalendarBtn">Calendar</button>
-    <button id="tabTodoBtn">To-Do</button>
+  <div class="nav-dropdown" id="navDropdown">
+    <button class="nav-dropdown-btn" id="navDropdownBtn" type="button">
+      <span id="navDropdownLabel">Agenda</span>
+      <span class="nav-caret">&#9662;</span>
+    </button>
+    <div class="nav-dropdown-menu" id="navDropdownMenu">
+      <button id="tabAgendaBtn" class="active">Agenda</button>
+      <button id="tabCalendarBtn">Calendar</button>
+      <button id="tabTodoBtn">To-Do</button>
+    </div>
   </div>
 
   <div class="quickadd">
@@ -893,7 +931,7 @@
   function awardGoalPoints(owner, taskId) {
     return supabase.from("cozzyz_points").insert({ owner: owner, task_id: taskId, points: GOAL_POINTS }).then(function (res) {
       if (res.error) console.error("Award points error:", res.error.message);
-      if (owner === PROFILE) loadPoints();
+      loadPoints();
     });
   }
 
@@ -903,22 +941,38 @@
       .order("created_at", { ascending: false }).limit(1).then(function (res) {
         if (res.error || !res.data || !res.data.length) return;
         return supabase.from("cozzyz_points").delete().eq("id", res.data[0].id).then(function () {
-          if (owner === PROFILE) loadPoints();
+          loadPoints();
         });
       });
   }
 
+  function ownerLabel(o) { return o === "kael" ? "Kael" : "Zaza"; }
+
   function loadPoints() {
     var now = new Date();
     var startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
-    return supabase.from("cozzyz_points").select("points").eq("owner", PROFILE).gte("created_at", startOfMonth).then(function (res) {
-      var total = 0;
+    return supabase.from("cozzyz_points").select("owner, points").gte("created_at", startOfMonth).then(function (res) {
+      var totals = { kael: 0, zaza: 0 };
       if (!res.error && res.data) {
-        res.data.forEach(function (p) { total += p.points; });
+        res.data.forEach(function (p) {
+          if (totals[p.owner] === undefined) totals[p.owner] = 0;
+          totals[p.owner] += p.points;
+        });
       }
-      var badge = document.getElementById("pointsBadge");
-      if (badge) badge.textContent = "🏆 " + total + " pts this month";
+      renderLeaderboard(totals);
     });
+  }
+
+  function renderLeaderboard(totals) {
+    var badge = document.getElementById("pointsBadge");
+    if (!badge) return;
+    var kaelPts = totals.kael || 0;
+    var zazaPts = totals.zaza || 0;
+    var diff = Math.abs(kaelPts - zazaPts);
+    var lead;
+    if (kaelPts === zazaPts) lead = "Tied";
+    else lead = (kaelPts > zazaPts ? "Kael" : "Zaza") + " +" + diff;
+    badge.textContent = "🏆 Kael " + kaelPts + " · Zaza " + zazaPts + " (" + lead + ")";
   }
 
   // ===================== Goals: end-of-day check-in =====================
@@ -1156,9 +1210,11 @@
 
   // ===================== View switching =====================
 
-  document.getElementById("tabAgendaBtn").addEventListener("click", function () { switchView("agenda"); });
-  document.getElementById("tabCalendarBtn").addEventListener("click", function () { switchView("calendar"); });
-  document.getElementById("tabTodoBtn").addEventListener("click", function () { switchView("todo"); });
+  document.getElementById("tabAgendaBtn").addEventListener("click", function () { switchView("agenda"); closeNavDropdown(); });
+  document.getElementById("tabCalendarBtn").addEventListener("click", function () { switchView("calendar"); closeNavDropdown(); });
+  document.getElementById("tabTodoBtn").addEventListener("click", function () { switchView("todo"); closeNavDropdown(); });
+
+  var VIEW_LABELS = { agenda: "Agenda", calendar: "Calendar", todo: "To-Do" };
 
   function switchView(v) {
     currentView = v;
@@ -1168,8 +1224,28 @@
     document.getElementById("agendaView").classList.toggle("active", v === "agenda");
     document.getElementById("calendarView").classList.toggle("active", v === "calendar");
     document.getElementById("todoView").classList.toggle("active", v === "todo");
+    document.getElementById("navDropdownLabel").textContent = VIEW_LABELS[v] || v;
     if (v === "todo") loadTodos();
   }
+
+  // ===================== Nav dropdown (Agenda / Calendar / To-Do) =====================
+
+  var navDropdown = document.getElementById("navDropdown");
+  var navDropdownBtn = document.getElementById("navDropdownBtn");
+
+  function toggleNavDropdown() { navDropdown.classList.toggle("open"); }
+  function closeNavDropdown() { navDropdown.classList.remove("open"); }
+
+  navDropdownBtn.addEventListener("click", function (e) {
+    e.stopPropagation();
+    toggleNavDropdown();
+  });
+
+  document.addEventListener("click", function (e) {
+    if (navDropdown.classList.contains("open") && !navDropdown.contains(e.target)) {
+      closeNavDropdown();
+    }
+  });
 
   // ===================== To-Do list (small items, separate from tasks) =====================
 
